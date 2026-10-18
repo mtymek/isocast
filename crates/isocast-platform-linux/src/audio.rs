@@ -154,6 +154,41 @@ fn format_pod(channels: u32) -> Result<Vec<u8>> {
     .into_inner())
 }
 
+/// Continuous capture times. The samples are the truth: each buffer
+/// follows the last one sample-exactly. The measured time (graph time less
+/// delay) only nudges it, by at most 200 ppm of the buffer's length, which
+/// follows a real clock's drift but ignores PipeWire's rate estimate
+/// settling after the stream starts (its cycles ran up to 1.2% long for
+/// the first second with the BRIO); the engine counts anything over 2 ms
+/// off as a dropout. A jump past 50 ms (an xrun, a gap) re-anchors.
+#[derive(Default)]
+struct Timeline {
+    /// Where the next buffer starts, in nanoseconds; none before the first.
+    next: Option<i64>,
+}
+
+/// A measured time this far from the running one is a real gap or jump.
+const REANCHOR_NS: i64 = 50_000_000;
+
+/// The largest correction, as a share of a buffer's length (200 ppm).
+const MAX_SLEW: i64 = 5_000;
+
+impl Timeline {
+    /// The time of a buffer of `frames` measured at `measured`.
+    fn next(&mut self, measured: i64, frames: u64) -> i64 {
+        let length = frames as i64 * 1_000_000_000 / i64::from(SAMPLE_RATE);
+        let at = match self.next {
+            Some(expected) if (measured - expected).abs() <= REANCHOR_NS => {
+                let limit = (length / MAX_SLEW).max(1);
+                expected + ((measured - expected) / 64).clamp(-limit, limit)
+            }
+            _ => measured,
+        };
+        self.next = Some(at + length);
+        at
+    }
+}
+
 /// What to capture.
 pub enum Source {
     /// A node, by `node.name`, with this many channels, delivering `pick`.
@@ -168,11 +203,7 @@ pub enum Source {
 
 /// Start capturing `source`, delivering interleaved samples (one or two
 /// channels) with their capture times. Returns the channel count delivered.
-pub fn capture(
-    source: Source,
-    sink: AudioSink,
-    now: impl Fn() -> Time + Send + 'static,
-) -> Result<(AudioStream, u32)> {
+pub fn capture(source: Source, sink: AudioSink) -> Result<(AudioStream, u32)> {
     let (target, stream_channels, pick, monitor) = match source {
         Source::Node {
             name,
@@ -202,10 +233,17 @@ pub fn capture(
                     *pw::keys::TARGET_OBJECT => target.as_str(),
                 };
                 if monitor {
+                    // Follows the default output when it changes.
                     props.insert(*pw::keys::STREAM_CAPTURE_SINK, "true");
+                } else {
+                    // A device or app that goes away stops the capture
+                    // (the engine opens it again when it is back), rather
+                    // than PipeWire moving it to another input.
+                    props.insert(*pw::keys::NODE_DONT_RECONNECT, "true");
                 }
                 let stream = pw::stream::StreamBox::new(&core, "Isocast capture", props)?;
                 let sink_for_process = Arc::clone(&sink);
+                let mut timeline = Timeline::default();
                 let _listener = stream
                     .add_local_listener_with_user_data(())
                     .process(move |stream, _| {
@@ -251,17 +289,29 @@ pub fn capture(
                                 };
                                 (time.now(), delay.max(0))
                             }
-                            _ => (now().as_nanos(), 0),
+                            // Before the stream's clock runs (its first
+                            // cycles): no time to place the audio on yet.
+                            _ => return,
                         };
-                        let at = Time::from_nanos(base - delay - duration);
+                        let measured = base - delay - duration;
+                        let at = Time::from_nanos(timeline.next(measured, frames as u64));
                         (sink_for_process.samples)(&samples, at);
                     })
                     .state_changed({
                         let sink = Arc::clone(&sink);
-                        move |_, _, _, state| {
-                            if let pw::stream::StreamState::Error(error) = state {
+                        let target = target.clone();
+                        move |_, _, old, new| match new {
+                            pw::stream::StreamState::Error(error) => {
                                 (sink.stopped)(format!("audio capture: {error}"));
                             }
+                            // Linked before, unlinked now: its device or
+                            // app went away.
+                            pw::stream::StreamState::Unconnected
+                                if !matches!(old, pw::stream::StreamState::Connecting) =>
+                            {
+                                (sink.stopped)(format!("{target} disconnected"));
+                            }
+                            _ => {}
                         }
                     })
                     .register()?;
@@ -384,4 +434,21 @@ pub fn play(output: &str, render: AudioRender) -> Result<AudioStream> {
         stop: Some(stop),
         thread: Some(thread),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeline_absorbs_jitter_and_reanchors_on_gaps() {
+        let mut timeline = Timeline::default();
+        let frames = 480; // 10 ms
+        assert_eq!(timeline.next(1_000_000_000, frames), 1_000_000_000);
+        // 3 ms off moves the time by 200 ppm of 10 ms, 2 microseconds.
+        let jittered = timeline.next(1_013_000_000, frames);
+        assert_eq!(jittered, 1_010_002_000);
+        // A 100 ms gap re-anchors.
+        assert_eq!(timeline.next(1_120_000_000, frames), 1_120_000_000);
+    }
 }

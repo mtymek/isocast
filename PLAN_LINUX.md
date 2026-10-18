@@ -163,7 +163,7 @@ upstream don't conflict in the 8 000-line notes file.
     kept per target, up to 3 minutes for the first dialog.
   - [ ] **L.4d2 DMA-BUF screen frames.** Import the portal's DMA-BUFs into
     Vulkan instead of copying shared memory (4K60 copies cost CPU).
-  - [ ] **L.4e Hotplug and reconnects.**
+  - [x] **L.4e Hotplug and reconnects.**
 - [ ] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
   stub or lavapipe run does not count.
@@ -337,3 +337,17 @@ upstream don't conflict in the 8 000-line notes file.
   apps playing audio. Verified with `pw-play` playing a 440 Hz tone: a 6 s
   take's track measures -54.1 dB RMS each second, the same as the file
   played.
+- L.4e (2026-10-18): unplugging a device stops its capture with a clear
+  reason and the engine reopens it (every 5 s while idle; a take in
+  progress keeps the file ended early, as on macOS). Named microphones and
+  app streams are `node.dont-reconnect`, so PipeWire can't move them to
+  another input; system audio still follows the default output. Verified
+  by unplugging the BRIO 3.5 s into a 20 s take: camera ("No such device")
+  and microphone ("target not found") stopped in the same millisecond, the
+  program recorded all 20 s, both reopened afterwards; an app stream
+  ending (`pw-play`) did the same.
+  Audio timing: capture times now follow the samples, nudged at most
+  200 ppm toward PipeWire's graph time. PipeWire's rate estimate runs up
+  to 1.2% off for the first second of a stream, which had shown as 2–6
+  audio dropouts in the first take after the engine started. Six 10 s
+  BRIO takes (three right after starting the engine) then had 0 dropouts.

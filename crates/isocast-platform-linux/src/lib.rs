@@ -355,7 +355,6 @@ mod platform {
         ) -> Result<(Capture, u32)> {
             let microphone = crate::audio::find_microphone(device)?;
             let pick = crate::audio::pick_channels(microphone.channels, channels)?;
-            let platform = *self;
             let (stream, count) = crate::audio::capture(
                 crate::audio::Source::Node {
                     name: microphone.id,
@@ -363,7 +362,6 @@ mod platform {
                     pick,
                 },
                 sink,
-                move || platform.now(),
             )?;
             Ok((Capture::Audio(stream), count))
         }
@@ -382,12 +380,8 @@ mod platform {
                 );
             }
             let output = crate::audio::find_output("default")?;
-            let platform = *self;
-            let (stream, count) = crate::audio::capture(
-                crate::audio::Source::Monitor { sink: output.id },
-                sink,
-                move || platform.now(),
-            )?;
+            let (stream, count) =
+                crate::audio::capture(crate::audio::Source::Monitor { sink: output.id }, sink)?;
             Ok((Capture::Audio(stream), count))
         }
 
@@ -416,7 +410,6 @@ mod platform {
             let app = crate::audio::find_app(app)?;
             let channels = app.channels.max(1);
             let pick = crate::audio::pick_channels(channels, None)?;
-            let platform = *self;
             let (stream, count) = crate::audio::capture(
                 crate::audio::Source::Node {
                     name: app.serial,
@@ -424,7 +417,6 @@ mod platform {
                     pick,
                 },
                 sink,
-                move || platform.now(),
             )?;
             Ok((Capture::Audio(stream), count))
         }

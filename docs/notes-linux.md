@@ -168,3 +168,8 @@ in `PLAN_LINUX.md`.
 - A UVC camera's picture trails its microphone by about 60–95 ms (Logitech
   BRIO, 1080p30 MJPEG, clap test): V4L2 timestamps mark buffer arrival.
   Use `audio.offset_ms` on the microphone (about 80) to line them up.
+- PipeWire's graph time runs up to 1.2% fast or slow for the first second
+  of a capture stream (its DLL settling): 1024-sample cycles 21.5–21.6 ms
+  apart instead of 21.33. Timestamping each buffer from graph time made
+  the engine count 2–6 dropouts (its tolerance is 2 ms); capture times
+  follow the sample count, slewed at most 200 ppm.
