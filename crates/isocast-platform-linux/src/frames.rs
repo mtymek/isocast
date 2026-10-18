@@ -54,8 +54,14 @@ pub struct Layout {
     pub planes: Vec<Plane>,
     /// Bytes of memory per frame (a whole number of pages).
     pub len: usize,
-    /// Vulkan memory types the images may be bound to; 0 without a GPU.
+    /// Vulkan memory types the images may be bound to; 0 without a GPU
+    /// or with a shadow.
     pub(crate) memory_types: u32,
+    /// Each frame also has textures in GPU memory the GPU draws into,
+    /// copied down on demand ([`Frame::sync`]). For a discrete GPU's
+    /// Y'CbCr targets: its shader writes into CPU memory across PCIe kept
+    /// the RX 5700 XT 99% busy.
+    pub(crate) shadow: bool,
 }
 
 impl Layout {
@@ -69,6 +75,11 @@ impl Layout {
             bail!("frame pool: Y'CbCr size {width}x{height} must be even");
         }
         match Gpu::new() {
+            Ok(gpu) if kind == Kind::YCbCr && gpu::discrete(&gpu) => {
+                let mut layout = Self::packed(kind, width, height)?;
+                layout.shadow = true;
+                Ok(layout)
+            }
             Ok(gpu) if gpu::host_memory(&gpu) => gpu::layout(&gpu, kind, width, height),
             _ => Self::packed(kind, width, height),
         }
@@ -128,6 +139,7 @@ impl Layout {
             planes,
             len,
             memory_types,
+            shadow: false,
         })
     }
 }
@@ -204,6 +216,8 @@ pub(crate) struct Allocation {
 /// textures hold only the allocation).
 pub(crate) struct Slot {
     pub(crate) allocation: Arc<Allocation>,
+    /// The frame's GPU-memory copy, for a layout with `shadow`.
+    pub(crate) shadow: Option<gpu::Shadow>,
 }
 
 /// A video frame. Cloning is cheap: it shares the same memory.
@@ -230,9 +244,18 @@ impl Frame {
         &self.layout
     }
 
+    /// Bring the GPU's drawing into the frame's memory, if the GPU drew
+    /// into a shadow; call before [`Frame::plane`]. Waits for the copy.
+    pub fn sync(&self) -> Result<()> {
+        match &self.slot.shadow {
+            Some(shadow) => shadow.download(&self.layout, &self.slot.allocation.mapping),
+            None => Ok(()),
+        }
+    }
+
     /// Plane `index`'s bytes (BGRA: 0; Y'CbCr: 0 luma, 1 chroma), each row
     /// [`Plane::row_pitch`] apart. Valid once the GPU has finished drawing
-    /// into it.
+    /// into it, and after [`Frame::sync`].
     pub fn plane(&self, index: usize) -> &[u8] {
         let plane = &self.layout.planes[index];
         let start = plane.base + plane.offset;
@@ -300,7 +323,12 @@ impl FramePool {
             mapping,
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         });
-        self.slots.push(Arc::new(Slot { allocation }));
+        let shadow = if self.layout.shadow {
+            Some(gpu::Shadow::new(&Gpu::new()?, &self.layout)?)
+        } else {
+            None
+        };
+        self.slots.push(Arc::new(Slot { allocation, shadow }));
         Ok(Some(self.slots.len() - 1))
     }
 

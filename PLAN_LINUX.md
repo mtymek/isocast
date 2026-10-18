@@ -95,7 +95,7 @@ upstream don't conflict in the 8 000-line notes file.
     instead of `~/Movies/Isocast` on Linux, in new setups and profiles and
     the OBS-import fallback. Help and MCP text that names `~/Movies` moves
     to the L.6 wording pass.
-- [ ] **L.2 Linux synthetic platform.** `isocast-platform-linux` with the
+- [x] **L.2 Linux synthetic platform.** `isocast-platform-linux` with the
   monotonic clock, machine facts, volumes, a Vulkan compositor and
   `isocast-mux` writing with Linux durability. Done when a synthetic
   program plus ISOs produce decodable, aligned files here and under
@@ -117,21 +117,21 @@ upstream don't conflict in the 8 000-line notes file.
     repair on Linux (its recovery module is Windows-only today), launch
     recovery of killed takes, and the `normal`, `pressure`, `commit`,
     `ownership` and `recover` contracts.
-  - [ ] **L.2e Discrete GPU frames.** On the RX 5700 XT the compositor
+  - [x] **L.2e Discrete GPU frames.** On the RX 5700 XT the compositor
     drawing into and sampling CPU-memory frames over PCIe holds the GPU at
     99% busy and drops about half the frames of a 1080p60 program plus
     ISOs.
     - [x] **L.2e1 Prefer the integrated GPU.** On Linux the engine asks
       wgpu for the low-power adapter, so machines with an iGPU composite
       where CPU memory is local.
-    - [ ] **L.2e2 GPU-memory frames.** Render targets in device-local
-      memory exported as DMA-BUF, imported by VA-API without copies; CPU
-      access (JPEG monitors, software encoding) through explicit readback.
-      Done when the synthetic setup records with 0 dropped frames on a
-      machine with only a discrete GPU (here: force the RX 5700 XT with
-      `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`).
+    - [x] **L.2e2 GPU-memory frames.** On a discrete GPU, Y'CbCr output
+      frames get shadow textures in GPU memory that the compositor draws
+      into; `Frame::sync` copies them down once when a CPU consumer (the
+      encoder, JPEG monitors) needs the pixels. DMA-BUF hand-over to VA-API
+      without the copy down is left to L.3.
 - [ ] **L.3 Encoders.** libavcodec VA-API and NVENC, LGPL software last;
-  DMA-BUF input where the driver allows; program priority and ISO shedding
+  DMA-BUF input where the driver allows (shadow frames straight to VA-API
+  on the same GPU, no copy down and upload); program priority and ISO shedding
   within detected session limits; clear errors for unsupported codecs.
 - [ ] **L.4 Capture and audio.** Portal/PipeWire screen and window capture
   as DMA-BUF, V4L2 cameras, PipeWire mic/loopback/output; `permissions()`
@@ -252,3 +252,14 @@ upstream don't conflict in the 8 000-line notes file.
   peaks at 13.0 GB in one rustc (clippy 8.3 GB), which killed the 16 GB
   runner (exit 143, "lost communication"); its 13 tests don't run on CI.
   The job frees disk and adds 10 GB of swap first.
+- L.2e2 (2026-10-18): an experiment on the RX 5700 XT isolated the cost:
+  with Y'CbCr render targets in GPU memory the GPU fell from 99% to 22%
+  busy and drops from 496 to 0; sampling CPU-memory sources cost nothing
+  measurable. So on a discrete GPU, Y'CbCr pool frames get shadow textures
+  in GPU memory, and consumers call `Frame::sync` to copy them down once.
+  Verified with the compositor forced onto the RX 5700 XT
+  (`VK_DRIVER_FILES=.../radeon_icd.json`): 10 s synthetic take, 0 dropped
+  (was 851), 38% busy, 600/600/300 frames, clean decode, correct picture,
+  beep 0.883354 s against flash 0.883333 s. The default iGPU path still
+  records 0 dropped. The native media contract suite passes on both GPUs.
+  L.2 is done.

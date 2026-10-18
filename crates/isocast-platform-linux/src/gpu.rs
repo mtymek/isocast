@@ -136,6 +136,138 @@ pub(crate) fn layout(gpu: &Gpu, kind: Kind, width: u32, height: u32) -> Result<L
     Layout::finish(kind, width, height, planes, memory_types)
 }
 
+/// Whether `gpu` is a discrete GPU (frames in CPU memory sit across PCIe).
+pub(crate) fn discrete(gpu: &Gpu) -> bool {
+    gpu.device.adapter_info().device_type == wgpu::DeviceType::DiscreteGpu
+}
+
+/// A frame's planes in GPU memory, drawn into by the GPU and copied to the
+/// frame's CPU memory when a consumer needs the pixels there.
+pub(crate) struct Shadow {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    pub(crate) planes: Vec<wgpu::Texture>,
+    staging: Vec<wgpu::Buffer>,
+    /// The GPU drew since the last copy down.
+    dirty: std::sync::Mutex<bool>,
+}
+
+// SAFETY: every field is a wgpu handle (`Send` and `Sync`) or a mutex.
+// Said explicitly because proving it through wgpu-core's types overflows
+// the trait solver in isocastd (see `Owner`).
+unsafe impl Send for Shadow {}
+unsafe impl Sync for Shadow {}
+
+impl Shadow {
+    pub(crate) fn new(gpu: &Gpu, layout: &Layout) -> Result<Self> {
+        let mut planes = Vec::new();
+        let mut staging = Vec::new();
+        for (index, plane) in layout.planes.iter().enumerate() {
+            let (_, format) = vk_format(layout.kind, index);
+            planes.push(gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("frame shadow"),
+                size: wgpu::Extent3d {
+                    width: plane.width,
+                    height: plane.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            }));
+            staging.push(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("frame shadow download"),
+                size: (plane.row_pitch * plane.height as usize) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            }));
+        }
+        Ok(Self {
+            device: gpu.device.clone(),
+            queue: gpu.queue.clone(),
+            planes,
+            staging,
+            dirty: std::sync::Mutex::new(false),
+        })
+    }
+
+    /// The GPU is about to draw into the shadow.
+    pub(crate) fn drawn(&self) {
+        if let Ok(mut dirty) = self.dirty.lock() {
+            *dirty = true;
+        }
+    }
+
+    /// Copy the shadow into `mapping` if the GPU drew since the last copy.
+    pub(crate) fn download(&self, layout: &Layout, mapping: &Mapping) -> Result<()> {
+        let mut dirty = self
+            .dirty
+            .lock()
+            .map_err(|_| anyhow::anyhow!("a frame download panicked"))?;
+        if !*dirty {
+            return Ok(());
+        }
+        let device = &self.device;
+        let mut encoder = device.create_command_encoder(&Default::default());
+        for ((texture, buffer), plane) in self.planes.iter().zip(&self.staging).zip(&layout.planes)
+        {
+            encoder.copy_texture_to_buffer(
+                texture.as_image_copy(),
+                wgpu::TexelCopyBufferInfo {
+                    buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(plane.row_pitch as u32),
+                        rows_per_image: Some(plane.height),
+                    },
+                },
+                texture.size(),
+            );
+        }
+        let submission = self.queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for buffer in &self.staging {
+            let sender = sender.clone();
+            buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| drop(sender.send(result)));
+        }
+        drop(sender);
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(std::time::Duration::from_secs(2)),
+            })
+            .context("waiting for a frame to copy down from the GPU")?;
+        for result in receiver.iter() {
+            result.context("mapping a frame's download")?;
+        }
+        for (buffer, plane) in self.staging.iter().zip(&layout.planes) {
+            let data = buffer
+                .slice(..)
+                .get_mapped_range()
+                .map_err(|error| anyhow::anyhow!("reading a frame's download: {error}"))?;
+            let start = plane.base + plane.offset;
+            debug_assert!(start + data.len() <= mapping.len());
+            // SAFETY: inside the frame's mapping; readers of this frame
+            // wait on `dirty`, which is held.
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), mapping.ptr().add(start), data.len());
+            }
+            drop(data);
+            buffer.unmap();
+        }
+        *dirty = false;
+        Ok(())
+    }
+}
+
 /// A frame buffer's memory, imported into the GPU.
 pub(crate) struct HostImport {
     device: ash::Device,
@@ -425,6 +557,36 @@ impl Importer {
         Ok(planes)
     }
 
+    /// New textures holding what `planes` hold, copied on the GPU.
+    fn copy_of(&self, planes: &[wgpu::Texture]) -> Vec<wgpu::Texture> {
+        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        let copies = planes
+            .iter()
+            .map(|plane| {
+                let copy = self.gpu.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("frame import"),
+                    size: plane.size(),
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: plane.format(),
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC
+                        | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                encoder.copy_texture_to_texture(
+                    plane.as_image_copy(),
+                    copy.as_image_copy(),
+                    plane.size(),
+                );
+                copy
+            })
+            .collect();
+        self.gpu.queue.submit([encoder.finish()]);
+        copies
+    }
+
     fn check(frame: &Frame, kind: Kind) -> Result<()> {
         if frame.kind() != kind {
             bail!(
@@ -440,6 +602,11 @@ impl FrameImporter for Importer {
     type Frame = Frame;
 
     fn import(&mut self, frame: &Frame) -> Result<GpuFrame> {
+        if let Some(shadow) = &frame.slot.shadow {
+            // A copy of its own, so the frame can go back to its pool.
+            let planes = self.copy_of(&shadow.planes);
+            return Ok(pixels(frame, planes));
+        }
         let planes = self.uncached(frame, false)?;
         Ok(pixels(frame, planes))
     }
@@ -456,12 +623,19 @@ impl FrameImporter for Importer {
 
     fn ycbcr_target(&mut self, frame: &Frame) -> Result<(wgpu::Texture, wgpu::Texture)> {
         Self::check(frame, Kind::YCbCr)?;
+        if let Some(shadow) = &frame.slot.shadow {
+            shadow.drawn();
+            return Ok((shadow.planes[0].clone(), shadow.planes[1].clone()));
+        }
         let mut planes = self.uncached(frame, true)?;
         let chroma = planes.remove(1);
         Ok((planes.remove(0), chroma))
     }
 
     fn import_cached(&mut self, frame: &Frame) -> Result<Option<GpuFrame>> {
+        if let Some(shadow) = &frame.slot.shadow {
+            return Ok(Some(pixels(frame, shadow.planes.clone())));
+        }
         let planes = self.cached(frame)?;
         Ok(Some(pixels(frame, planes)))
     }
@@ -471,6 +645,10 @@ impl FrameImporter for Importer {
         frame: &Frame,
     ) -> Result<Option<(wgpu::Texture, wgpu::Texture)>> {
         Self::check(frame, Kind::YCbCr)?;
+        if let Some(shadow) = &frame.slot.shadow {
+            shadow.drawn();
+            return Ok(Some((shadow.planes[0].clone(), shadow.planes[1].clone())));
+        }
         let mut planes = self.cached(frame)?;
         let chroma = planes.remove(1);
         Ok(Some((planes.remove(0), chroma)))

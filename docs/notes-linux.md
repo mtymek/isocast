@@ -86,6 +86,13 @@ in `PLAN_LINUX.md`.
 - 2026-10-18: Video quality maps Isocast's 1–100 scale to constant QP
   `round(40 - q × 0.25)` (70 → 22) for VA-API CQP and libx264 CRF.
 
+- 2026-10-18: Discrete GPUs composite Y'CbCr outputs into shadow textures
+  in GPU memory, copied down on demand (`Frame::sync`). Shader writes into
+  CPU memory over PCIe were the bottleneck; GPU copy-engine transfers and
+  sampling CPU-memory sources are cheap. The engine still prefers the
+  integrated GPU on Linux (fewer copies); a discrete-only machine records
+  with 0 drops too.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:

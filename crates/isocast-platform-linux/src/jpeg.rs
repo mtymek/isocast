@@ -9,6 +9,7 @@ use crate::frames::{Frame, Kind};
 /// `frame` as a JPEG of `quality` (0 to 1), scaled down to at most
 /// `max_width` wide: the bytes, width and height.
 pub fn encode(frame: &Frame, max_width: Option<u32>, quality: f32) -> Result<(Vec<u8>, u32, u32)> {
+    frame.sync()?;
     let mut rgb = rgb(frame)?;
     if let Some(max) = max_width.filter(|max| *max > 0 && *max < rgb.width()) {
         let height = (u64::from(rgb.height()) * u64::from(max) / u64::from(rgb.width())).max(1);

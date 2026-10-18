@@ -411,6 +411,7 @@ impl VideoEncoder {
         }
         let (planes, pitches): ([*const u8; 2], [usize; 2]) = match frame.kind() {
             Kind::YCbCr => {
+                frame.sync()?;
                 let layout = frame.layout();
                 (
                     [frame.plane(0).as_ptr(), frame.plane(1).as_ptr()],
