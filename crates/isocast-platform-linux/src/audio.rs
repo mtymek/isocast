@@ -33,7 +33,7 @@ impl Drop for AudioStream {
 /// The microphone `device` names: "default", an id, a name, or part of a
 /// name (the shortest name containing it wins).
 pub fn find_microphone(device: &str) -> Result<Microphone> {
-    let (microphones, _) = crate::devices::audio()?;
+    let microphones = crate::devices::audio()?.microphones;
     let found = if device == "default" {
         microphones
             .iter()
@@ -65,7 +65,7 @@ pub fn find_microphone(device: &str) -> Result<Microphone> {
 
 /// The output `device` names, as for microphones.
 pub fn find_output(device: &str) -> Result<AudioOutput> {
-    let (_, outputs) = crate::devices::audio()?;
+    let outputs = crate::devices::audio()?.outputs;
     let found = if device == "default" {
         outputs.iter().find(|o| o.default).or(outputs.first())
     } else {
@@ -90,6 +90,32 @@ pub fn find_output(device: &str) -> Result<AudioOutput> {
             valid.join(", ")
         )
     })
+}
+
+/// The app's playback stream `app` names: its name or binary, or part of
+/// the name (the shortest containing it wins).
+pub fn find_app(app: &str) -> Result<crate::devices::AppStream> {
+    let apps = crate::devices::audio()?.apps;
+    let wanted = app.to_lowercase();
+    apps.iter()
+        .find(|a| a.name == app || a.binary == app)
+        .or_else(|| {
+            apps.iter()
+                .filter(|a| a.name.to_lowercase().contains(&wanted))
+                .min_by_key(|a| a.name.len())
+        })
+        .cloned()
+        .with_context(|| {
+            let playing: Vec<&str> = apps.iter().map(|a| a.name.as_str()).collect();
+            format!(
+                "app: no app playing audio matches {app:?}; playing now: {}",
+                if playing.is_empty() {
+                    "none".to_string()
+                } else {
+                    playing.join(", ")
+                }
+            )
+        })
 }
 
 /// Which input channels to deliver (numbered from 1), of `available`; by

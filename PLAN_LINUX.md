@@ -151,9 +151,11 @@ upstream don't conflict in the 8 000-line notes file.
     timestamps on `CLOCK_MONOTONIC`.
   - [x] **L.4c Audio.** PipeWire microphone, system audio (monitor of the
     default sink) and playback.
-  - [ ] **L.4c2 Application audio and exclusions.** One app's audio (its
-    PipeWire stream node), and system audio leaving out apps or Isocast's
-    own playback.
+  - [x] **L.4c2 Application audio.** One app's audio (its PipeWire
+    stream node); apps with audio listed in `isocast devices`.
+  - [ ] **L.4c4 System audio exclusions.** System audio leaving out apps
+    or Isocast's own monitoring (capture each other app's stream and mix,
+    or a filtered PipeWire graph).
   - [x] **L.4c3 Measured A/V offset.** A clap in front of a camera with its
     microphone: offset between the clap frame and its sound.
   - [x] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
@@ -330,3 +332,8 @@ upstream don't conflict in the 8 000-line notes file.
   60–95 ms: V4L2 stamps buffers when they arrive, after the camera's own
   exposure and MJPEG pipeline. Not compensated in code; a setup lines them
   up with `sources[].audio.offset_ms = 80` on the microphone, as in OBS.
+- L.4c2 (2026-10-18): `application_audio` sources capture the app's
+  PipeWire playback stream (by `object.serial`); `isocast devices` lists
+  apps playing audio. Verified with `pw-play` playing a 440 Hz tone: a 6 s
+  take's track measures -54.1 dB RMS each second, the same as the file
+  played.

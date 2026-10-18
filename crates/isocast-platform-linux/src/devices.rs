@@ -9,8 +9,8 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
 use isocast_protocol::devices::{
-    AudioOutput, Camera, CameraKind, Devices, Display, Microphone, Permission, Permissions,
-    VideoFormat,
+    AudioApp, AudioOutput, Camera, CameraKind, Devices, Display, Microphone, Permission,
+    Permissions, VideoFormat,
 };
 use v4l::video::Capture;
 
@@ -25,7 +25,21 @@ pub fn devices() -> Result<Devices> {
             None
         }
     };
-    let (microphones, audio_outputs) = audio.clone().unwrap_or_default();
+    let found = audio.is_some();
+    let Audio {
+        microphones,
+        outputs: audio_outputs,
+        apps,
+    } = audio.unwrap_or_default();
+    let audio_apps = apps
+        .into_iter()
+        .map(|app| AudioApp {
+            name: app.name,
+            bundle_id: (!app.binary.is_empty()).then_some(app.binary),
+            pid: app.pid,
+            playing: true,
+        })
+        .collect();
     notes.push(
         "screens and windows are chosen in the desktop's screen-sharing dialog the first time \
          a setup records them; the choice is kept"
@@ -45,8 +59,8 @@ pub fn devices() -> Result<Devices> {
         cameras,
         microphones,
         audio_outputs,
-        audio_apps: Vec::new(),
-        permissions: permissions(audio.is_some()),
+        audio_apps,
+        permissions: permissions(found),
         notes,
     })
 }
@@ -214,6 +228,25 @@ pub(crate) fn pipewire_init() {
     INIT.get_or_init(pipewire::init);
 }
 
+/// What PipeWire has: sources, sinks and apps' playback streams.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Audio {
+    pub microphones: Vec<Microphone>,
+    pub outputs: Vec<AudioOutput>,
+    pub apps: Vec<AppStream>,
+}
+
+/// An app's playback stream.
+#[derive(Debug, Clone)]
+pub(crate) struct AppStream {
+    pub name: String,
+    pub binary: String,
+    pub pid: u32,
+    /// Its `object.serial`, which a capture stream targets.
+    pub serial: String,
+    pub channels: u32,
+}
+
 /// One PipeWire node of interest.
 #[derive(Debug, Clone)]
 struct Node {
@@ -224,11 +257,15 @@ struct Node {
     rate: f64,
     product: String,
     vendor: String,
+    app: String,
+    binary: String,
+    pid: u32,
+    serial: String,
 }
 
 /// PipeWire's audio sources (microphones) and sinks (outputs), the
 /// defaults marked.
-pub(crate) fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
+pub(crate) fn audio() -> Result<Audio> {
     pipewire_init();
     let mainloop = pipewire::main_loop::MainLoopRc::new(None).context("PipeWire main loop")?;
     let context = pipewire::context::ContextRc::new(&mainloop, None).context("PipeWire context")?;
@@ -262,7 +299,7 @@ pub(crate) fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
                 match global.type_ {
                     pipewire::types::ObjectType::Node => {
                         let class = props.get("media.class").unwrap_or_default();
-                        if class != "Audio/Source" && class != "Audio/Sink" {
+                        if !matches!(class, "Audio/Source" | "Audio/Sink" | "Stream/Output/Audio") {
                             return;
                         }
                         let get = |key: &str| props.get(key).unwrap_or_default().to_string();
@@ -278,6 +315,10 @@ pub(crate) fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
                             rate: get("audio.rate").parse().unwrap_or(48_000.0),
                             product: get("device.product.name"),
                             vendor: get("device.vendor.name"),
+                            app: get("application.name"),
+                            binary: get("application.process.binary"),
+                            pid: get("application.process.id").parse().unwrap_or(0),
+                            serial: get("object.serial"),
                         });
                     }
                     pipewire::types::ObjectType::Metadata
@@ -365,7 +406,28 @@ pub(crate) fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
             channels: node.channels,
         })
         .collect();
-    Ok((microphones, outputs))
+    let apps = nodes
+        .iter()
+        .filter(|node| node.class == "Stream/Output/Audio" && !node.serial.is_empty())
+        // Isocast's own monitoring.
+        .filter(|node| node.name != "isocast-monitor")
+        .map(|node| AppStream {
+            name: if node.app.is_empty() {
+                node.name.clone()
+            } else {
+                node.app.clone()
+            },
+            binary: node.binary.clone(),
+            pid: node.pid,
+            serial: node.serial.clone(),
+            channels: node.channels,
+        })
+        .collect();
+    Ok(Audio {
+        microphones,
+        outputs,
+        apps,
+    })
 }
 
 /// The permissions and the next step for each one that isn't granted.

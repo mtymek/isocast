@@ -205,6 +205,14 @@ mod platform {
                     video: None,
                     channels: None,
                 })),
+                SourceKind::ApplicationAudio(settings) => {
+                    let app = crate::audio::find_app(&settings.app)?;
+                    Ok(Some(Probe {
+                        device: app.name,
+                        video: None,
+                        channels: Some(app.channels.clamp(1, 2)),
+                    }))
+                }
                 SourceKind::SystemAudio(_) => {
                     let output = crate::audio::find_output("default")?;
                     Ok(Some(Probe {
@@ -402,12 +410,23 @@ mod platform {
             Err(unsupported("browser sources"))
         }
 
-        fn capture_application_audio(
-            &self,
-            _app: &str,
-            _sink: AudioSink,
-        ) -> Result<(Capture, u32)> {
-            Err(unsupported("application audio capture"))
+        /// The app's playback stream, as it plays (before the output's
+        /// volume). A stream the app closes ends the capture.
+        fn capture_application_audio(&self, app: &str, sink: AudioSink) -> Result<(Capture, u32)> {
+            let app = crate::audio::find_app(app)?;
+            let channels = app.channels.max(1);
+            let pick = crate::audio::pick_channels(channels, None)?;
+            let platform = *self;
+            let (stream, count) = crate::audio::capture(
+                crate::audio::Source::Node {
+                    name: app.serial,
+                    channels,
+                    pick,
+                },
+                sink,
+                move || platform.now(),
+            )?;
+            Ok((Capture::Audio(stream), count))
         }
 
         fn create_video_encoder(&self, _spec: &LiveVideoSpec) -> Result<Unsupported> {
