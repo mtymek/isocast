@@ -62,6 +62,18 @@ impl Platform for LinuxPlatform {
     fn now(&self) -> Time {
         system::now()
     }
+    fn sleep_until(&self, at: Time) {
+        system::sleep_until(at)
+    }
+    fn thread_cpu_time(&self) -> Option<std::time::Duration> {
+        system::thread_cpu_time()
+    }
+    fn calibration_priority(&self) -> Option<&'static str> {
+        system::calibration_priority()
+    }
+    fn write_latency(&self, probe: &Path) -> Option<std::time::Duration> {
+        system::write_latency(probe).ok()
+    }
     fn machine(&self) -> Machine {
         system::machine()
     }

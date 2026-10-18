@@ -10,11 +10,97 @@ use anyhow::{Context, Result};
 use isocast_engine::{Time, Volume};
 use isocast_protocol::api::Machine;
 
+/// The process's clock origin: an `Instant` and the same moment's
+/// `CLOCK_MONOTONIC` reading (the clock `Instant` uses on Linux), so
+/// [`sleep_until`] can turn a [`Time`] into an absolute deadline.
+fn origin() -> &'static (Instant, i64) {
+    static ORIGIN: OnceLock<(Instant, i64)> = OnceLock::new();
+    ORIGIN.get_or_init(|| (Instant::now(), monotonic_nanos()))
+}
+
 pub fn now() -> Time {
-    static ORIGIN: OnceLock<Instant> = OnceLock::new();
-    Time::from_nanos(
-        i64::try_from(ORIGIN.get_or_init(Instant::now).elapsed().as_nanos()).unwrap_or(i64::MAX),
-    )
+    Time::from_nanos(i64::try_from(origin().0.elapsed().as_nanos()).unwrap_or(i64::MAX))
+}
+
+fn monotonic_nanos() -> i64 {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: writes the monotonic clock into `time`.
+    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) };
+    time.tv_sec.saturating_mul(1_000_000_000) + time.tv_nsec
+}
+
+/// Sleep until `at` with an absolute `CLOCK_MONOTONIC` deadline: no drift
+/// from computing a relative sleep, and no timer slack added twice by
+/// `nanosleep`'s relative form.
+pub fn sleep_until(at: Time) {
+    let nanos = origin().1.saturating_add(at.as_nanos());
+    let deadline = libc::timespec {
+        tv_sec: nanos.div_euclid(1_000_000_000),
+        tv_nsec: nanos.rem_euclid(1_000_000_000),
+    };
+    // SAFETY: an absolute sleep on the monotonic clock; EINTR sleeps
+    // again until the same deadline.
+    while unsafe {
+        libc::clock_nanosleep(
+            libc::CLOCK_MONOTONIC,
+            libc::TIMER_ABSTIME,
+            &deadline,
+            std::ptr::null_mut(),
+        )
+    } == libc::EINTR
+    {}
+}
+
+/// The calling thread's CPU time (`CLOCK_THREAD_CPUTIME_ID`).
+pub fn thread_cpu_time() -> Option<std::time::Duration> {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: writes the calling thread's CPU time into `time`.
+    let status = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
+    (status == 0)
+        .then(|| std::time::Duration::new(time.tv_sec.max(0) as u64, time.tv_nsec.max(0) as u32))
+}
+
+/// Lower this disposable calibration helper's priority. On Linux a
+/// thread's nice value is its own, so lower the process and the thread.
+pub fn calibration_priority() -> Option<&'static str> {
+    // SAFETY: changes only this process and the calling thread.
+    let process = unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 15) };
+    let thread = unsafe { libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as _, 15) };
+    (process == 0 && thread == 0).then_some("nice 15")
+}
+
+/// How long a 4 KiB write to `probe` takes to reach the disk: written
+/// and `fdatasync`ed.
+pub fn write_latency(probe: &Path) -> std::io::Result<std::time::Duration> {
+    use std::os::unix::fs::FileExt;
+    use std::os::unix::io::AsRawFd;
+    let started = Instant::now();
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(probe)?;
+    file.write_all_at(&[0; 4096], 0)?;
+    // SAFETY: an open descriptor.
+    if unsafe { libc::fdatasync(file.as_raw_fd()) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(started.elapsed())
+}
+
+/// `PRETTY_NAME` in `/etc/os-release`.
+fn os_name(os_release: &str) -> Option<String> {
+    let value = os_release
+        .lines()
+        .find_map(|line| line.strip_prefix("PRETTY_NAME="))?;
+    let value = value.trim().trim_matches('"').trim_matches('\'');
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 pub fn machine() -> Machine {
@@ -41,9 +127,19 @@ pub fn machine() -> Machine {
             .unwrap_or_else(|| std::env::consts::ARCH.into()),
         memory_gb: memory.map_or(0.0, |kb| kb as f64 / (1024.0 * 1024.0)),
         cores: std::thread::available_parallelism().map_or(0, |cores| cores.get() as u32),
-        os: std::fs::read_to_string("/proc/sys/kernel/osrelease")
-            .map(|release| format!("Linux {}", release.trim()))
-            .unwrap_or_else(|_| "Linux".into()),
+        os: {
+            let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+                .map(|release| format!("Linux {}", release.trim()))
+                .unwrap_or_else(|_| "Linux".into());
+            match std::fs::read_to_string("/etc/os-release")
+                .ok()
+                .as_deref()
+                .and_then(os_name)
+            {
+                Some(name) => format!("{name}, {kernel}"),
+                None => kernel,
+            }
+        },
         hardware_encoders: Vec::new(),
     }
 }
@@ -115,6 +211,26 @@ mod tests {
             Some(46)
         );
         assert_eq!(process_ticks("broken"), None);
+    }
+
+    #[test]
+    fn os_release_pretty_name() {
+        assert_eq!(
+            os_name("NAME=Arch\nPRETTY_NAME=\"Arch Linux\"\n").as_deref(),
+            Some("Arch Linux")
+        );
+        assert_eq!(os_name("PRETTY_NAME=''\n"), None);
+        assert_eq!(os_name("NAME=Arch\n"), None);
+    }
+
+    #[test]
+    fn sleep_until_waits_for_its_deadline() {
+        let at = Time::from_nanos(now().as_nanos() + 20_000_000);
+        sleep_until(at);
+        assert!(now() >= at);
+        let past = now();
+        sleep_until(Time::from_nanos(0));
+        assert!(now().as_nanos() - past.as_nanos() < 5_000_000);
     }
 
     #[test]
