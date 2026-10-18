@@ -191,7 +191,7 @@ upstream don't conflict in the 8 000-line notes file.
   - [x] **L.7a Live encoders and streaming.** H.264 at a bitrate (CBR or
     average, keyframe interval, low latency) and AAC for streams and the
     H.264 monitors.
-  - [ ] **L.7b Media reader.** libav decoding for media sources, stingers
+  - [x] **L.7b Media reader.** libav decoding for media sources, stingers
     and the editor (`open_media`).
   - [ ] **L.7c Virtual camera.** A PipeWire video source node (or
     v4l2loopback) other apps can open as a camera.
@@ -422,3 +422,10 @@ upstream don't conflict in the 8 000-line notes file.
   to a local RTMP listener (`ffmpeg -listen 1`) delivered 347 H.264 frames
   and 272 AAC frames (5.8 s at 60 fps), 0 dropped, 0 reconnects; the test
   key was removed from the keyring after.
+- L.7b (2026-10-18): `open_media` decodes with libav: video into CPU
+  frames (NV12, or BGRA for alpha or odd sizes) through libswscale with
+  the file's colour space and range, audio resampled to 48 kHz stereo
+  float; frame-threaded decoding. Verified: a media source looping an
+  earlier synthetic ISO recorded a 5.0 s program (300 frames, 5.0 s AAC)
+  with the right picture, and the clip's beeps and burnt-in clock agree
+  (both 0.483 s from program time).

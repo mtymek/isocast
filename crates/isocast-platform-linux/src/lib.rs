@@ -64,7 +64,7 @@ mod platform {
     use crate::frames::{Frame, FramePool, Kind};
     use crate::gpu::Importer;
     use crate::system;
-    use crate::unsupported::{Unsupported, unsupported};
+    use crate::unsupported::unsupported;
 
     /// A running capture. Dropping it stops the capture.
     pub enum Capture {
@@ -95,7 +95,7 @@ mod platform {
         type Writer = crate::writer::Writer;
         type Capture = Capture;
         type Importer = Importer;
-        type Media = Unsupported;
+        type Media = crate::media::Reader;
         type Playback = crate::audio::AudioStream;
         type VideoEncoder = crate::live::LiveVideo;
         type AudioEncoder = crate::live::LiveAudio;
@@ -166,11 +166,8 @@ mod platform {
             crate::media::media_info(path)
         }
 
-        fn open_media(&self, path: &Path, _part: MediaPart) -> Result<Unsupported> {
-            Err(unsupported(&format!(
-                "decoding media file {}",
-                path.display()
-            )))
+        fn open_media(&self, path: &Path, part: MediaPart) -> Result<crate::media::Reader> {
+            crate::media::open(path, part)
         }
 
         fn frame_importer(&self, gpu: &Gpu) -> Result<Importer> {

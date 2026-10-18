@@ -41,8 +41,8 @@ in `PLAN_LINUX.md`.
   then run `target/release/isocast-ui`: live preview, scenes and sources,
   recording program + ISOs from cameras, microphones, system audio, app
   audio and screens (the screen-sharing dialog the first time). Global
-  hotkeys need `scripts/linux-dev-install.sh` once. Not yet: streaming,
-  media files as sources, the virtual camera (L.7), packaging (L.8).
+  hotkeys need `scripts/linux-dev-install.sh` once. Streaming and media
+  sources work too. Not yet: the virtual camera (L.7c), packaging (L.8).
 
 ## Decisions
 
