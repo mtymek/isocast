@@ -18,6 +18,9 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "park
 isocast-platform-macos = { path = "../isocast-platform-macos" }
 wgpu = { version = "=30.0.1", default-features = false, features = ["metal"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+isocast-platform-linux = { path = "../isocast-platform-linux" }
+
 [target.'cfg(windows)'.dependencies]
 isocast-platform-windows = { path = "../isocast-platform-windows" }
 wgpu = { version = "=30.0.1", default-features = false, features = ["dx12"] }

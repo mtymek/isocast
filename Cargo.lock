@@ -4220,6 +4220,7 @@ version = "0.0.9"
 dependencies = [
  "anyhow",
  "isocast-engine",
+ "isocast-platform-linux",
  "isocast-platform-macos",
  "isocast-platform-stub",
  "isocast-platform-windows",
