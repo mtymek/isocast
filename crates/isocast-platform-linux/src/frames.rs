@@ -67,7 +67,9 @@ pub struct Layout {
 impl Layout {
     /// The GPU's layout for `kind` frames of this size, or packed rows
     /// when there is no GPU to ask.
-    fn new(kind: Kind, width: u32, height: u32) -> Result<Self> {
+    /// `gpu_drawn`: the GPU draws these frames (outputs), rather than the
+    /// CPU (captures); only those get a shadow on a discrete GPU.
+    fn new(kind: Kind, width: u32, height: u32, gpu_drawn: bool) -> Result<Self> {
         if width == 0 || height == 0 {
             bail!("frame pool: size {width}x{height} must be at least 1x1");
         }
@@ -75,7 +77,7 @@ impl Layout {
             bail!("frame pool: Y'CbCr size {width}x{height} must be even");
         }
         match Gpu::new() {
-            Ok(gpu) if kind == Kind::YCbCr && gpu::discrete(&gpu) => {
+            Ok(gpu) if gpu_drawn && kind == Kind::YCbCr && gpu::discrete(&gpu) => {
                 let mut layout = Self::packed(kind, width, height)?;
                 layout.shadow = true;
                 Ok(layout)
@@ -288,11 +290,47 @@ pub struct FramePool {
 }
 
 impl FramePool {
+    /// Frames the GPU draws into (and the CPU, for BGRA).
     pub fn new(kind: Kind, width: u32, height: u32) -> Result<Self> {
         Ok(Self {
-            layout: Arc::new(Layout::new(kind, width, height)?),
+            layout: Arc::new(Layout::new(kind, width, height, true)?),
             slots: Vec::new(),
         })
+    }
+
+    /// Frames only the CPU writes, like a camera's.
+    pub fn cpu(kind: Kind, width: u32, height: u32) -> Result<Self> {
+        Ok(Self {
+            layout: Arc::new(Layout::new(kind, width, height, false)?),
+            slots: Vec::new(),
+        })
+    }
+
+    /// Take a frame and let `fill` write its planes (as many as the kind
+    /// has, each with its layout). `None` if every frame is in use.
+    pub(crate) fn fill(
+        &mut self,
+        fill: impl FnOnce(&mut [&mut [u8]], &[Plane]) -> Result<()>,
+    ) -> Result<Option<Frame>> {
+        let Some(index) = self.free_slot()? else {
+            return Ok(None);
+        };
+        let mapping = &self.slots[index].allocation.mapping;
+        let mut planes: Vec<&mut [u8]> = self
+            .layout
+            .planes
+            .iter()
+            .map(|plane| {
+                let start = plane.base + plane.offset;
+                let len = plane.row_pitch * plane.height as usize;
+                debug_assert!(start + len <= mapping.len());
+                // SAFETY: the pool holds the only reference to this slot;
+                // planes don't overlap; inside the mapping.
+                unsafe { std::slice::from_raw_parts_mut(mapping.ptr().add(start), len) }
+            })
+            .collect();
+        fill(&mut planes, &self.layout.planes)?;
+        Ok(Some(self.frame(index)))
     }
 
     /// A slot nothing else holds, or a new one while the pool has room;

@@ -93,6 +93,15 @@ in `PLAN_LINUX.md`.
   integrated GPU on Linux (fewer copies); a discrete-only machine records
   with 0 drops too.
 
+- 2026-10-18: Cameras come from V4L2 (`v4l` crate), audio devices from
+  PipeWire's registry (`pipewire` crate); their ids are the
+  `/dev/v4l/by-id` name and PipeWire's `node.name`, both stable across
+  replugging. The default source and sink come from the `default`
+  metadata object.
+- 2026-10-18: Capture tests with the BRIO camera, a microphone or the
+  screen record the person at the desk, so they wait for the fork owner's
+  go-ahead (synthetic sources cover everything else).
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:

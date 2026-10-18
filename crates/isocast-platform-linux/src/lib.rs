@@ -5,7 +5,13 @@
 //! fails with a clear error, as the stub platform's does.
 
 #[cfg(target_os = "linux")]
+mod camera;
+#[cfg(target_os = "linux")]
 mod codec_config;
+#[cfg(target_os = "linux")]
+mod convert;
+#[cfg(target_os = "linux")]
+mod devices;
 #[cfg(target_os = "linux")]
 mod encode;
 #[cfg(target_os = "linux")]
@@ -50,6 +56,11 @@ mod platform {
     use crate::system;
     use crate::unsupported::{Unsupported, unsupported};
 
+    /// A running capture. Dropping it stops the capture.
+    pub enum Capture {
+        Camera(crate::camera::CameraCapture),
+    }
+
     /// The Linux platform: a cheap handle, like macOS's.
     #[derive(Debug, Clone, Copy, Default)]
     pub struct LinuxPlatform;
@@ -70,7 +81,7 @@ mod platform {
         type Frame = Frame;
         type FramePool = FramePool;
         type Writer = crate::writer::Writer;
-        type Capture = Unsupported;
+        type Capture = Capture;
         type Importer = Importer;
         type Media = Unsupported;
         type Playback = Unsupported;
@@ -108,19 +119,24 @@ mod platform {
         }
 
         fn devices(&self) -> Result<Devices> {
-            STUB.devices()
+            crate::devices::devices()
         }
 
         fn permissions(&self) -> Result<PermissionsReport> {
-            STUB.permissions()
+            Ok(crate::devices::permissions_report())
         }
 
-        fn request_permissions(&self, only: Option<PermissionKind>) -> Result<PermissionsReport> {
-            STUB.request_permissions(only)
+        /// Nothing to ask ahead on Linux: device access is the user's
+        /// groups, and screens are asked for when capture starts.
+        fn request_permissions(&self, _only: Option<PermissionKind>) -> Result<PermissionsReport> {
+            Ok(crate::devices::permissions_report())
         }
 
         fn open_permission_settings(&self, permission: PermissionKind) -> Result<String> {
-            STUB.open_permission_settings(permission)
+            anyhow::bail!(
+                "{}: Linux has no settings page for this; `isocast permissions` says what to do",
+                permission.label()
+            )
         }
 
         fn media_info(&self, path: &Path) -> Result<MediaInfo> {
@@ -143,7 +159,18 @@ mod platform {
         }
 
         fn probe(&self, source: &SourceKind, canvas: &Canvas) -> Result<Option<Probe>> {
-            STUB.probe(source, canvas)
+            match source {
+                SourceKind::Camera(settings) => crate::camera::probe(
+                    &settings.device,
+                    CameraRequest {
+                        size: settings.width.zip(settings.height),
+                        fps: settings.fps,
+                    },
+                    canvas,
+                )
+                .map(Some),
+                other => STUB.probe(other, canvas),
+            }
         }
 
         fn volume(&self, path: &Path) -> Result<Volume> {
@@ -245,18 +272,21 @@ mod platform {
             _ten_bit: bool,
             _cursor: bool,
             _sink: VideoSink<Frame>,
-        ) -> Result<(Unsupported, CaptureFormat)> {
+        ) -> Result<(Capture, CaptureFormat)> {
             Err(unsupported("screen capture"))
         }
 
         fn capture_camera(
             &self,
-            _device: &str,
-            _request: CameraRequest,
-            _canvas: &Canvas,
-            _sink: VideoSink<Frame>,
-        ) -> Result<(Unsupported, CaptureFormat)> {
-            Err(unsupported("camera capture"))
+            device: &str,
+            request: CameraRequest,
+            canvas: &Canvas,
+            sink: VideoSink<Frame>,
+        ) -> Result<(Capture, CaptureFormat)> {
+            let platform = *self;
+            let (camera, format) =
+                crate::camera::capture(device, request, canvas, sink, move || platform.now())?;
+            Ok((Capture::Camera(camera), format))
         }
 
         fn capture_microphone(
@@ -264,7 +294,7 @@ mod platform {
             _device: &str,
             _channels: Option<&[u32]>,
             _sink: AudioSink,
-        ) -> Result<(Unsupported, u32)> {
+        ) -> Result<(Capture, u32)> {
             Err(unsupported("microphone capture"))
         }
 
@@ -273,7 +303,7 @@ mod platform {
             _exclude: &[String],
             _sink: AudioSink,
             _exclude_own: bool,
-        ) -> Result<(Unsupported, u32)> {
+        ) -> Result<(Capture, u32)> {
             Err(unsupported("system audio capture"))
         }
 
@@ -286,7 +316,7 @@ mod platform {
             _page: &BrowserPage<'_>,
             _video: VideoSink<Frame>,
             _audio: Option<AudioSink>,
-        ) -> Result<(Unsupported, CaptureFormat, Arc<dyn BrowserControl>)> {
+        ) -> Result<(Capture, CaptureFormat, Arc<dyn BrowserControl>)> {
             Err(unsupported("browser sources"))
         }
 
@@ -294,7 +324,7 @@ mod platform {
             &self,
             _app: &str,
             _sink: AudioSink,
-        ) -> Result<(Unsupported, u32)> {
+        ) -> Result<(Capture, u32)> {
             Err(unsupported("application audio capture"))
         }
 

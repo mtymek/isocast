@@ -129,14 +129,31 @@ upstream don't conflict in the 8 000-line notes file.
       into; `Frame::sync` copies them down once when a CPU consumer (the
       encoder, JPEG monitors) needs the pixels. DMA-BUF hand-over to VA-API
       without the copy down is left to L.3.
-- [ ] **L.3 Encoders.** libavcodec VA-API and NVENC, LGPL software last;
-  DMA-BUF input where the driver allows (shadow frames straight to VA-API
-  on the same GPU, no copy down and upload); program priority and ISO shedding
-  within detected session limits; clear errors for unsupported codecs.
-- [ ] **L.4 Capture and audio.** Portal/PipeWire screen and window capture
-  as DMA-BUF, V4L2 cameras, PipeWire mic/loopback/output; `permissions()`
-  and `request_permissions()` mapped onto the portal; hotplug and
-  reconnects.
+- [ ] **L.3 Encoders.** Program priority and ISO shedding within
+  detected session limits; clear errors for unsupported codecs.
+  - [x] **L.3a VA-API and libx264.** Done in L.2c: H.264/HEVC on VA-API,
+    libx264 for H.264 without it.
+  - [ ] **L.3b NVENC.** `h264_nvenc`/`hevc_nvenc` when an NVIDIA GPU is
+    present. Needs NVIDIA hardware to qualify (none here).
+  - [ ] **L.3c Zero-copy VA-API input.** Shadow frames handed to VA-API on
+    the same GPU as DMA-BUF, without the copy down and upload. An
+    optimisation: the copy path records 1080p60 + ISOs with 0 drops.
+  - [ ] **L.3d LGPL software encoder.** OpenH264 for distribution builds
+    whose FFmpeg has no libx264.
+- [ ] **L.4 Capture and audio.** Done when a setup with a camera, the
+  screen, a microphone and system audio records program and ISOs with
+  aligned A/V.
+  - [x] **L.4a Devices and permissions.** `devices()` lists V4L2 cameras
+    with their formats, PipeWire audio inputs and outputs, and screens
+    (through the portal); `permissions()` reports camera device access,
+    PipeWire reachability and the ScreenCast portal.
+  - [x] **L.4b Cameras.** V4L2 capture (MJPEG, YUYV, NV12) into frames,
+    timestamps on `CLOCK_MONOTONIC`.
+  - [ ] **L.4c Audio.** PipeWire microphone, system audio (monitor of the
+    default sink), application audio and playback.
+  - [ ] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
+    PipeWire, DMA-BUF frames imported into Vulkan, restore token kept.
+  - [ ] **L.4e Hotplug and reconnects.**
 - [ ] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
   stub or lavapipe run does not count.
@@ -263,3 +280,19 @@ upstream don't conflict in the 8 000-line notes file.
   beep 0.883354 s against flash 0.883333 s. The default iGPU path still
   records 0 dropped. The native media contract suite passes on both GPUs.
   L.2 is done.
+- L.4a (2026-10-18): `isocast devices` lists V4L2 cameras (by-id ids,
+  every format and frame rate; metadata nodes left out) and PipeWire
+  microphones and outputs with the defaults marked; `isocast permissions`
+  reports camera node access, PipeWire, and that screens go through the
+  portal (not built). Verified here: the Logitech BRIO (and its IR node),
+  the BRIO and ACE microphones and the ACE output, defaults matching
+  `wpctl status`.
+- L.4b (2026-10-18): V4L2 cameras record. Format choice follows macOS's
+  (rate up to the canvas, largest fitting size, orientation, then NV12 >
+  YUYV > MJPEG); MJPEG decodes with libavcodec and YUYV/MJPEG convert to
+  Rec. 709 video-range NV12 with libswscale into CPU-written frames;
+  buffer timestamps are `CLOCK_MONOTONIC`. Verified with the Logitech BRIO
+  (with the owner's go-ahead): doctor chose 1920×1080 @ 30 MJPEG on a
+  1080p30 canvas; a 20 s take recorded program 600 frames and FACECAM 579
+  frames (30.0 fps over 19.3 s, start offset 0.7 s in the manifest), 0
+  dropped, full decode clean, correct picture.
