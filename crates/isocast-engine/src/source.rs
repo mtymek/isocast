@@ -471,8 +471,9 @@ impl Drop for Generator {
     }
 }
 
-/// How long opening a source may take before it is given up on.
-const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
+/// How long opening a source may take before it is given up on, unless
+/// the platform says otherwise ([`Platform::open_timeout`]).
+pub const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
 /// Given-up opens of one source that may still be stuck in macOS at once.
 /// A native call can't be cancelled, so each holds its thread until macOS
 /// returns (a driver that stops answering made Core Audio wait 11 minutes,
@@ -490,6 +491,8 @@ pub(crate) struct OpenHelp {
     permission: Option<String>,
     /// A device with a driver of its own (a camera or microphone).
     device: bool,
+    /// How long the open may take ([`Platform::open_timeout`]).
+    timeout: Duration,
 }
 
 impl OpenHelp {
@@ -513,7 +516,7 @@ impl OpenHelp {
     }
 }
 
-/// Run a native open on its own thread for at most [`OPEN_TIMEOUT`],
+/// Run a native open on its own thread for at most `help.timeout`,
 /// including time spent behind macOS prompts. `slot` names what is opened
 /// (a source and its device): a timed-out open is given up on and the next
 /// one starts afresh, while at most [`STUCK_PER_SOURCE`] given-up opens of
@@ -532,7 +535,7 @@ fn bounded_open<T: Send + 'static>(
     let context = help.context();
     let what = &help.what;
     let token = NEXT.fetch_add(1, Ordering::Relaxed);
-    let deadline = Instant::now() + OPEN_TIMEOUT;
+    let deadline = Instant::now() + help.timeout;
     {
         let mut slots = pending.0.lock();
         // With too many stuck, wait (within the same time) for one to
@@ -639,11 +642,11 @@ fn bounded_open<T: Send + 'static>(
                 "warn",
                 "source",
                 "source open given up",
-                serde_json::json!({"source": what, "seconds": OPEN_TIMEOUT.as_secs()}),
+                serde_json::json!({"source": what, "seconds": help.timeout.as_secs()}),
             );
             bail!(
                 "{what} did not open within {} s; {context}",
-                OPEN_TIMEOUT.as_secs()
+                help.timeout.as_secs()
             )
         }
         Err(RecvTimeoutError::Disconnected) => bail!("opening {what} crashed"),
@@ -661,6 +664,7 @@ pub(crate) fn open<P: Platform>(
 ) -> Result<Opened<P>> {
     let kind = setup.source(id).map(|s| &s.kind);
     let permission = kind.and_then(|kind| platform.source_permission(kind));
+    let timeout = kind.map_or(OPEN_TIMEOUT, |kind| platform.open_timeout(kind));
     // Opens are told apart by source and device, so choosing another
     // device opens at once even while the old one is stuck.
     let slot = format!(
@@ -673,16 +677,19 @@ pub(crate) fn open<P: Platform>(
             what: format!("microphone {:?}", m.device),
             permission,
             device: true,
+            timeout,
         },
         Some(SourceKind::Camera(c)) => OpenHelp {
             what: format!("camera {:?}", c.device),
             permission,
             device: true,
+            timeout,
         },
         _ => OpenHelp {
             what: "the source".into(),
             permission,
             device: false,
+            timeout,
         },
     };
     let (platform, setup, id, timeline, data) = (
@@ -1771,6 +1778,7 @@ pub(crate) fn stinger<P: Platform>(
         what: format!("the stinger video {file:?}"),
         permission,
         device: false,
+        timeout: OPEN_TIMEOUT,
     };
     bounded_open(format!("stinger {id:?} {file:?}"), help, move || {
         stinger_native(&platform, &setup, &id, &file, &timeline)

@@ -156,8 +156,11 @@ upstream don't conflict in the 8 000-line notes file.
     own playback.
   - [ ] **L.4c3 Measured A/V offset.** A clap in front of a camera with its
     microphone: offset between the clap frame and its sound.
-  - [ ] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
-    PipeWire, DMA-BUF frames imported into Vulkan, restore token kept.
+  - [x] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
+    PipeWire (shared-memory BGRx/RGBx copied into frames), restore token
+    kept per target, up to 3 minutes for the first dialog.
+  - [ ] **L.4d2 DMA-BUF screen frames.** Import the portal's DMA-BUFs into
+    Vulkan instead of copying shared memory (4K60 copies cost CPU).
   - [ ] **L.4e Hotplug and reconnects.**
 - [ ] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
@@ -310,3 +313,13 @@ upstream don't conflict in the 8 000-line notes file.
   output during the take is in the program's track from 2.84 s to 3.88 s;
   the BRIO microphone ISO track's level (mean -81.3 dB) matches a
   `pw-record` of the same input (-80.8 dB).
+
+- L.4d (2026-10-18): screens record through the ScreenCast portal and
+  PipeWire. The first take shows the desktop's sharing dialog; its restore
+  token is kept in `screencast-tokens.json` in the data folder, so later
+  takes start without it. `Platform::open_timeout` (new, default 8 s)
+  gives screens 3 minutes on Linux for the dialog. Verified with the owner
+  picking in Hyprland's picker: 10 s take, 300/300 frames, 0 dropped,
+  correct picture (the chosen 1730×2080 area, letterboxed in the
+  program); a later take restored without the dialog (`start` returned in
+  0.6 s), 150/150 frames over 5.0 s.

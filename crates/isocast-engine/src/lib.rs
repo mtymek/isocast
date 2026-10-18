@@ -31,6 +31,7 @@ pub mod replay;
 pub mod scene;
 pub mod snapshot;
 pub(crate) mod source;
+pub use source::OPEN_TIMEOUT;
 pub mod space;
 pub mod stream;
 pub mod synthetic;
@@ -163,6 +164,13 @@ pub trait Platform: Clone + Send + Sync + 'static {
     /// or perform protected I/O; a successful open clears this provisional state.
     fn source_permission(&self, _source: &SourceKind) -> Option<String> {
         None
+    }
+
+    /// How long opening `source` may take before it is given up on. Longer
+    /// where the desktop asks the user what to share as it opens (Linux's
+    /// screen-sharing dialog).
+    fn open_timeout(&self, _source: &SourceKind) -> std::time::Duration {
+        source::OPEN_TIMEOUT
     }
 
     /// Ask the OS for screen recording, camera and microphone access where

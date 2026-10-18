@@ -9,7 +9,8 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
 use isocast_protocol::devices::{
-    AudioOutput, Camera, CameraKind, Devices, Microphone, Permission, Permissions, VideoFormat,
+    AudioOutput, Camera, CameraKind, Devices, Display, Microphone, Permission, Permissions,
+    VideoFormat,
 };
 use v4l::video::Capture;
 
@@ -26,12 +27,20 @@ pub fn devices() -> Result<Devices> {
     };
     let (microphones, audio_outputs) = audio.clone().unwrap_or_default();
     notes.push(
-        "screens and windows are chosen in the desktop's screen-sharing dialog, which Linux \
-         recording doesn't support yet"
+        "screens and windows are chosen in the desktop's screen-sharing dialog the first time \
+         a setup records them; the choice is kept"
             .into(),
     );
     Ok(Devices {
-        displays: Vec::new(),
+        displays: vec![Display {
+            id: "main".into(),
+            name: "The screen chosen in the sharing dialog".into(),
+            main: true,
+            built_in: false,
+            width: 0,
+            height: 0,
+            refresh_rate: 0.0,
+        }],
         windows: Vec::new(),
         cameras,
         microphones,
@@ -52,7 +61,11 @@ pub fn permissions(pipewire: bool) -> Permissions {
         Permission::Denied
     };
     Permissions {
-        screen_recording: Permission::NotDetermined,
+        screen_recording: if crate::screen::remembered() {
+            Permission::Granted
+        } else {
+            Permission::NotDetermined
+        },
         camera: camera_access(),
         microphone: audio,
         system_audio: audio,
@@ -369,8 +382,8 @@ pub fn permissions_report() -> isocast_protocol::devices::PermissionsReport {
             let (needed_for, next_step) = match kind {
                 PermissionKind::ScreenRecording => (
                     "displays and windows",
-                    "the desktop asks which screen or window to share when recording starts \
-                     (not supported on Linux yet)",
+                    "the desktop asks which screen or window to share the first time a setup \
+                     records one; the choice is kept",
                 ),
                 PermissionKind::Camera => (
                     "cameras and capture cards",

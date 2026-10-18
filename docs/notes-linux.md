@@ -107,6 +107,12 @@ in `PLAN_LINUX.md`.
   `pipewire` crate's `v0_3_50` feature is needed for `TARGET_OBJECT` and
   `pw_stream_get_time_n` (Ubuntu 24.04 ships PipeWire 1.0).
 
+- 2026-10-18: Screens come from the ScreenCast portal (`ashpd` on a
+  one-worker tokio runtime kept for the session) with PipeWire frames in
+  shared memory. The portal decides what is shared; the setup's display
+  name and window app can't be matched, so each target key keeps its own
+  restore token.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
@@ -152,3 +158,10 @@ in `PLAN_LINUX.md`.
 - `jj new -m ...` run right after other jj commands sometimes left an
   empty undescribed change in the chain, and `jj git push` refuses those.
   Check `jj log -r 'main@origin::'` before pushing.
+
+- Hyprland's screen-sharing picker gives a restore token only when its
+  "Allow a restore token" option is ticked; without it every take shows
+  the dialog.
+- The engine gave every source 8 s to open, which the first-time portal
+  dialog can exceed; `Platform::open_timeout` now lets Linux give screens
+  3 minutes.

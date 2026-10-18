@@ -27,6 +27,8 @@ mod media;
 #[cfg(target_os = "linux")]
 pub mod plugin;
 #[cfg(target_os = "linux")]
+mod screen;
+#[cfg(target_os = "linux")]
 mod system;
 #[cfg(target_os = "linux")]
 mod unsupported;
@@ -62,6 +64,7 @@ mod platform {
     pub enum Capture {
         Camera(crate::camera::CameraCapture),
         Audio(crate::audio::AudioStream),
+        Screen(crate::screen::ScreenCapture),
     }
 
     /// The Linux platform: a cheap handle, like macOS's.
@@ -119,6 +122,17 @@ mod platform {
                 )
             } == libc::EINTR
             {}
+        }
+
+        /// A screen or window waits for the desktop's sharing dialog the
+        /// first time (no kept token): give the person time to choose.
+        fn open_timeout(&self, source: &SourceKind) -> std::time::Duration {
+            match source {
+                SourceKind::Display(_) | SourceKind::Window(_) => {
+                    std::time::Duration::from_secs(180)
+                }
+                _ => isocast_engine::OPEN_TIMEOUT,
+            }
         }
 
         fn devices(&self) -> Result<Devices> {
@@ -184,6 +198,13 @@ mod platform {
                         channels: Some(pick.len() as u32),
                     }))
                 }
+                // Chosen in the desktop's dialog: the size is known once it
+                // streams.
+                SourceKind::Display(_) | SourceKind::Window(_) => Ok(Some(Probe {
+                    device: "a screen chosen in the sharing dialog".into(),
+                    video: None,
+                    channels: None,
+                })),
                 SourceKind::SystemAudio(_) => {
                     let output = crate::audio::find_output("default")?;
                     Ok(Some(Probe {
@@ -290,13 +311,19 @@ mod platform {
 
         fn capture_screen(
             &self,
-            _target: ScreenTarget<'_>,
-            _fps: u32,
-            _ten_bit: bool,
-            _cursor: bool,
-            _sink: VideoSink<Frame>,
+            target: ScreenTarget<'_>,
+            fps: u32,
+            ten_bit: bool,
+            cursor: bool,
+            sink: VideoSink<Frame>,
         ) -> Result<(Capture, CaptureFormat)> {
-            Err(unsupported("screen capture"))
+            if ten_bit {
+                anyhow::bail!("10-bit screen capture isn't supported on Linux yet");
+            }
+            let platform = *self;
+            let (screen, format) =
+                crate::screen::capture(target, fps, cursor, sink, move || platform.now())?;
+            Ok((Capture::Screen(screen), format))
         }
 
         fn capture_camera(
