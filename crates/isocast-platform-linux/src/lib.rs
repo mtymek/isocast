@@ -1,14 +1,21 @@
 //! Linux back end for Isocast. Empty on other systems, so the workspace
 //! still builds everywhere.
 //!
-//! Built up in steps (`PLAN_LINUX.md`, L.2 onwards). What isn't Linux's own
-//! yet is the stub platform's: CPU BGRA frames, and a clear error for
-//! everything it can't do.
+//! Built up in steps (`PLAN_LINUX.md`, L.2 onwards). What isn't built yet
+//! fails with a clear error, as the stub platform's does.
 
+#[cfg(target_os = "linux")]
+pub mod frames;
+#[cfg(target_os = "linux")]
+mod gpu;
+#[cfg(target_os = "linux")]
+mod jpeg;
 #[cfg(target_os = "linux")]
 pub mod plugin;
 #[cfg(target_os = "linux")]
 mod system;
+#[cfg(target_os = "linux")]
+mod unsupported;
 
 #[cfg(target_os = "linux")]
 pub use platform::LinuxPlatform;
@@ -25,12 +32,15 @@ mod platform {
         LiveAudioSpec, LiveVideoSpec, MediaInfo, MediaPart, Platform, Probe, ScreenTarget, Time,
         VideoSink, Volume, WriterSpec,
     };
-    use isocast_platform_stub::{Frame, FramePool, StubPlatform, Unsupported};
+    use isocast_platform_stub::StubPlatform;
     use isocast_protocol::api::Machine;
     use isocast_protocol::devices::{Devices, PermissionKind, PermissionsReport};
     use isocast_protocol::{Canvas, SourceKind};
 
+    use crate::frames::{Frame, FramePool, Kind};
+    use crate::gpu::Importer;
     use crate::system;
+    use crate::unsupported::{Unsupported, unsupported};
 
     /// The Linux platform: a cheap handle, like macOS's.
     #[derive(Debug, Clone, Copy, Default)]
@@ -53,7 +63,7 @@ mod platform {
         type FramePool = FramePool;
         type Writer = Unsupported;
         type Capture = Unsupported;
-        type Importer = Unsupported;
+        type Importer = Importer;
         type Media = Unsupported;
         type Playback = Unsupported;
         type VideoEncoder = Unsupported;
@@ -109,12 +119,15 @@ mod platform {
             STUB.media_info(path)
         }
 
-        fn open_media(&self, path: &Path, part: MediaPart) -> Result<Unsupported> {
-            STUB.open_media(path, part)
+        fn open_media(&self, path: &Path, _part: MediaPart) -> Result<Unsupported> {
+            Err(unsupported(&format!(
+                "decoding media file {}",
+                path.display()
+            )))
         }
 
-        fn frame_importer(&self, gpu: &Gpu) -> Result<Unsupported> {
-            STUB.frame_importer(gpu)
+        fn frame_importer(&self, gpu: &Gpu) -> Result<Importer> {
+            Importer::new(gpu)
         }
 
         fn machine(&self) -> Machine {
@@ -172,28 +185,28 @@ mod platform {
         }
 
         fn frame_pool(&self, width: u32, height: u32) -> Result<FramePool> {
-            STUB.frame_pool(width, height)
+            FramePool::new(Kind::Bgra, width, height)
         }
 
         fn ycbcr_frame_pool(&self, width: u32, height: u32) -> Result<FramePool> {
-            STUB.ycbcr_frame_pool(width, height)
+            FramePool::new(Kind::YCbCr, width, height)
         }
 
         fn frame_size(&self, frame: &Frame) -> (u32, u32) {
-            STUB.frame_size(frame)
+            (frame.width(), frame.height())
         }
 
         fn frame_is_ycbcr(&self, frame: &Frame) -> bool {
-            STUB.frame_is_ycbcr(frame)
+            frame.kind() == Kind::YCbCr
         }
 
         fn shared_surface(
             &self,
-            gpu: &Gpu,
-            width: u32,
-            height: u32,
+            _gpu: &Gpu,
+            _width: u32,
+            _height: u32,
         ) -> Result<(isocast_surfaces::Surface, wgpu::Texture)> {
-            STUB.shared_surface(gpu, width, height)
+            Err(unsupported("shared GPU surfaces"))
         }
 
         fn encode_jpeg(
@@ -202,87 +215,87 @@ mod platform {
             max_width: Option<u32>,
             quality: f32,
         ) -> Result<(Vec<u8>, u32, u32)> {
-            STUB.encode_jpeg(frame, max_width, quality)
+            crate::jpeg::encode(frame, max_width, quality)
         }
 
         fn create_writer(&self, spec: &WriterSpec) -> Result<Unsupported> {
-            STUB.create_writer(spec)
+            Err(unsupported(&format!("recording {}", spec.path.display())))
         }
 
         fn recover_file(
             &self,
-            folder: &Path,
-            name: &std::ffi::OsStr,
+            _folder: &Path,
+            _name: &std::ffi::OsStr,
         ) -> Result<Option<isocast_engine::RecoveredFile>> {
-            STUB.recover_file(folder, name)
+            Err(unsupported("recovering recordings"))
         }
 
         fn capture_screen(
             &self,
-            target: ScreenTarget<'_>,
-            fps: u32,
-            ten_bit: bool,
-            cursor: bool,
-            sink: VideoSink<Frame>,
+            _target: ScreenTarget<'_>,
+            _fps: u32,
+            _ten_bit: bool,
+            _cursor: bool,
+            _sink: VideoSink<Frame>,
         ) -> Result<(Unsupported, CaptureFormat)> {
-            STUB.capture_screen(target, fps, ten_bit, cursor, sink)
+            Err(unsupported("screen capture"))
         }
 
         fn capture_camera(
             &self,
-            device: &str,
-            request: CameraRequest,
-            canvas: &Canvas,
-            sink: VideoSink<Frame>,
+            _device: &str,
+            _request: CameraRequest,
+            _canvas: &Canvas,
+            _sink: VideoSink<Frame>,
         ) -> Result<(Unsupported, CaptureFormat)> {
-            STUB.capture_camera(device, request, canvas, sink)
+            Err(unsupported("camera capture"))
         }
 
         fn capture_microphone(
             &self,
-            device: &str,
-            channels: Option<&[u32]>,
-            sink: AudioSink,
+            _device: &str,
+            _channels: Option<&[u32]>,
+            _sink: AudioSink,
         ) -> Result<(Unsupported, u32)> {
-            STUB.capture_microphone(device, channels, sink)
+            Err(unsupported("microphone capture"))
         }
 
         fn capture_system_audio(
             &self,
-            exclude: &[String],
-            sink: AudioSink,
-            exclude_own: bool,
+            _exclude: &[String],
+            _sink: AudioSink,
+            _exclude_own: bool,
         ) -> Result<(Unsupported, u32)> {
-            STUB.capture_system_audio(exclude, sink, exclude_own)
+            Err(unsupported("system audio capture"))
         }
 
-        fn play_audio(&self, device: &str, render: AudioRender) -> Result<(Unsupported, String)> {
-            STUB.play_audio(device, render)
+        fn play_audio(&self, _device: &str, _render: AudioRender) -> Result<(Unsupported, String)> {
+            Err(unsupported("audio playback"))
         }
 
         fn capture_browser(
             &self,
-            page: &BrowserPage<'_>,
-            video: VideoSink<Frame>,
-            audio: Option<AudioSink>,
+            _page: &BrowserPage<'_>,
+            _video: VideoSink<Frame>,
+            _audio: Option<AudioSink>,
         ) -> Result<(Unsupported, CaptureFormat, Arc<dyn BrowserControl>)> {
-            STUB.capture_browser(page, video, audio)
+            Err(unsupported("browser sources"))
         }
 
         fn capture_application_audio(
             &self,
-            app: &str,
-            sink: AudioSink,
+            _app: &str,
+            _sink: AudioSink,
         ) -> Result<(Unsupported, u32)> {
-            STUB.capture_application_audio(app, sink)
+            Err(unsupported("application audio capture"))
         }
 
-        fn create_video_encoder(&self, spec: &LiveVideoSpec) -> Result<Unsupported> {
-            STUB.create_video_encoder(spec)
+        fn create_video_encoder(&self, _spec: &LiveVideoSpec) -> Result<Unsupported> {
+            Err(unsupported("H.264 encoding"))
         }
 
-        fn create_audio_encoder(&self, spec: &LiveAudioSpec) -> Result<Unsupported> {
-            STUB.create_audio_encoder(spec)
+        fn create_audio_encoder(&self, _spec: &LiveAudioSpec) -> Result<Unsupported> {
+            Err(unsupported("AAC encoding"))
         }
 
         fn has_secret(&self, service: &str, account: &str) -> Result<bool> {

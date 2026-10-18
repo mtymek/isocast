@@ -105,7 +105,7 @@ upstream don't conflict in the 8 000-line notes file.
     `clock_nanosleep` deadlines, machine facts from `/proc` and
     `/etc/os-release`, `statfs` volumes, CPU times, write latency. The rest
     delegates to the stub until replaced.
-  - [ ] **L.2b Vulkan compositing.** wgpu `vulkan` on Linux; a frame
+  - [x] **L.2b Vulkan compositing.** wgpu `vulkan` on Linux; a frame
     importer for CPU frames (upload) and Y'CbCr pools, so the engine
     composites; JPEG monitors. `gpu` contract passes; `isocast frame`
     saves the program.
@@ -187,3 +187,14 @@ upstream don't conflict in the 8 000-line notes file.
   7.2.8-7-omarchy-bore`. Native `clock` and `pools` contracts pass (1 ms
   `sleep_until` overshoot 58 µs); `gpu` panics with no wgpu backend, which
   L.2b adds.
+- L.2b (2026-10-18): wgpu `vulkan` on Linux. The engine opens the Vulkan
+  device with `VK_EXT_external_memory_host` when the adapter has it (Linux
+  only; other platforms unchanged). Linux frames are page-aligned,
+  `MADV_DONTFORK` CPU memory imported once per buffer; each plane is a
+  linear Vulkan image bound to it, with the row pitch the GPU chose, so
+  the GPU draws into and samples frames without copies. Own BGRA and
+  Y'CbCr pools, importer (cached and uncached), JPEG monitors. Verified on
+  the RX 5700 XT (RADV): native `gpu` contract passes (exact pixels through
+  import, target and cached paths; pools refill after texture drop), and
+  `isocast frame` on a synthetic setup (two test patterns and a text
+  source) saved a correct 1920×1080 program at frame 24, T+0.400 s.

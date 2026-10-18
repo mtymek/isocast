@@ -8,12 +8,14 @@ description = "Linux back end for Isocast, built up in steps (PLAN_LINUX.md)."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 anyhow = "1.0.104"
+# The same release wgpu-hal uses: its `ash::Device` is handed to us.
+ash = { version = "0.38", default-features = false }
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 isocast-diagnostics = { path = "../isocast-diagnostics" }
 isocast-engine = { path = "../isocast-engine" }
 isocast-platform-stub = { path = "../isocast-platform-stub" }
 isocast-protocol = { path = "../isocast-protocol" }
 isocast-surfaces = { path = "../isocast-surfaces" }
 libc = "0.2"
-# Pinned like the engine's: only for the `wgpu::Texture` in `Platform`'s
-# signatures until the Vulkan importer (L.2b).
-wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+# Pinned like the engine's: the frame import uses wgpu-hal's Vulkan APIs.
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl", "vulkan"] }

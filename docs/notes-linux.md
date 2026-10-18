@@ -64,6 +64,17 @@ in `PLAN_LINUX.md`.
 - 2026-10-18: FUSE volumes count as local (ntfs-3g and sshfs share one
   magic number); the write-speed test still catches slow ones.
 
+- 2026-10-18: Linux frames are CPU memory the GPU imports with
+  `VK_EXT_external_memory_host` (RADV, ANV, NVIDIA and lavapipe have it),
+  the closest match to IOSurface: synthetic sources draw on the CPU, the
+  compositor draws into the same memory, CPU encoders read it. On a
+  discrete GPU the compositor's writes cross PCIe. DMA-BUF frames
+  (PipeWire capture, VA-API) come in L.3/L.4 as another frame kind.
+- 2026-10-18: Frame images start `UNINITIALIZED` in wgpu (layout
+  `UNDEFINED`), which the Vulkan spec lets a driver discard. Mesa keeps
+  linear contents; the `gpu` contract's exact-pixel checks catch a driver
+  that doesn't.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
@@ -78,3 +89,9 @@ in `PLAN_LINUX.md`.
 - Run the contract harness as `target/debug/isocast-platform-contracts
   native <case> <folder>`, where `<folder>` holds a `.contract-owner` file
   containing `isocast-platform-contracts`.
+- A `wgpu::Device` inside a frame type overflows the trait solver when
+  isocastd proves `Send`/`Sync` (`E0275` on `naga::ir::ImageClass: Sync`).
+  `gpu::Owner` wraps it with explicit `Send`/`Sync`.
+- `target/scratch/setups/synthetic.toml` is a permission-free setup (two
+  test patterns, text, tone) for compositing and recording checks. Apply
+  it to a scratch daemon with `isocast apply --revision 0 <file>`.

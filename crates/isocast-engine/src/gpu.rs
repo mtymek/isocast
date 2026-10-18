@@ -76,11 +76,19 @@ impl Gpu {
         // genuine NV12 allocations with two aspect views of one texture.
         let required_features = adapter.features()
             & (wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12);
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let descriptor = wgpu::DeviceDescriptor {
             label: Some("isocast"),
             required_features,
             ..Default::default()
-        }))
+        };
+        #[cfg(target_os = "linux")]
+        let opened = vulkan_with_host_memory(&adapter, &descriptor);
+        #[cfg(not(target_os = "linux"))]
+        let opened = None;
+        let (device, queue) = match opened {
+            Some(opened) => opened,
+            None => block_on(adapter.request_device(&descriptor)),
+        }
         .context("could not open the GPU")?;
         let lost = Arc::new(AtomicBool::new(false));
         let failed = lost.clone();
@@ -562,6 +570,52 @@ pub enum Matrix {
     Bt601,
     Bt709,
     Bt2020,
+}
+
+/// `VK_EXT_external_memory_host`: Linux frames are page-aligned CPU memory
+/// the GPU draws into and samples without copying, as macOS's IOSurfaces
+/// are.
+#[cfg(target_os = "linux")]
+pub const VULKAN_HOST_MEMORY: &std::ffi::CStr = c"VK_EXT_external_memory_host";
+
+/// Open a Vulkan adapter with [`VULKAN_HOST_MEMORY`] enabled as well as
+/// what wgpu enables itself. `None` for another backend or a device without
+/// the extension (then open it as usual).
+#[cfg(target_os = "linux")]
+fn vulkan_with_host_memory(
+    adapter: &wgpu::Adapter,
+    descriptor: &wgpu::DeviceDescriptor<'_>,
+) -> Option<Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError>> {
+    use wgpu::hal;
+    // SAFETY: only reads the adapter's capabilities.
+    let hal_adapter = unsafe { adapter.as_hal::<hal::api::Vulkan>() }?;
+    if !hal_adapter
+        .physical_device_capabilities()
+        .supports_extension(VULKAN_HOST_MEMORY)
+    {
+        return None;
+    }
+    // SAFETY: the callback only adds an extension the device supports.
+    let opened = unsafe {
+        hal_adapter.open_with_callback(
+            descriptor.required_features,
+            &descriptor.required_limits,
+            &descriptor.memory_hints,
+            Some(Box::new(|args| args.extensions.push(VULKAN_HOST_MEMORY))),
+        )
+    };
+    drop(hal_adapter);
+    let opened = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            isocast_diagnostics::diagnostic!("warn";
+                "could not open the GPU with {VULKAN_HOST_MEMORY:?}: {error}; opening it without");
+            return None;
+        }
+    };
+    // SAFETY: `opened` was just made from this adapter with `descriptor`'s
+    // features and limits.
+    Some(unsafe { adapter.create_device_from_hal(opened, descriptor) })
 }
 
 /// Shows a platform's frames to the GPU without copying them.
