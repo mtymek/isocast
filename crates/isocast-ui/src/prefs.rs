@@ -16,9 +16,15 @@ fn path() -> PathBuf {
     if let Some(path) = std::env::var_os("ISOCAST_UI_PREFS") {
         return PathBuf::from(path);
     }
-    // Beside the engine's own files: ~/Library/Application Support/Isocast
+    // Settings go in $XDG_CONFIG_HOME/isocast on Linux. Elsewhere they sit
+    // beside the engine's own files: ~/Library/Application Support/Isocast
     // on macOS, %LOCALAPPDATA%\Isocast on Windows (which has no HOME, so a
     // HOME-based path was relative to the install folder), ~/.isocast else.
+    if cfg!(target_os = "linux") {
+        return isocast_protocol::api::xdg_folder("XDG_CONFIG_HOME", ".config")
+            .join("isocast")
+            .join("isocast-ui.json");
+    }
     isocast_protocol::api::support_folder().join("isocast-ui.json")
 }
 

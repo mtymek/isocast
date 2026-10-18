@@ -78,10 +78,10 @@ upstream don't conflict in the 8 000-line notes file.
     green (needs the fork owner to push).
 - [ ] **L.1 Portable paths and services.** Same output on macOS, Linux
   defaults on Linux.
-  - [ ] **L.1a XDG paths.** One helper for data, log and preferences
+  - [x] **L.1a XDG paths.** One helper for data, log and preferences
     directories; replace the `~/Library` paths in `isocast-protocol`
     (`api.rs`, `obs.rs`), `isocast-diagnostics` and `isocast-ui/prefs.rs`.
-  - [ ] **L.1b Daemon launch.** The CLI finds and spawns `isocastd` on
+  - [x] **L.1b Daemon launch.** The CLI finds and spawns `isocastd` on
     Linux without the signed dev app; `isocast status` and `isocast
     restart` work against the stub.
   - [ ] **L.1c Diagnostics.** Crash reports from `coredumpctl` in the bug
@@ -124,3 +124,13 @@ upstream don't conflict in the 8 000-line notes file.
 - L.0b (2026-10-18, partial): `.github/workflows/linux.yml` written; YAML
   parses and its locked build passes locally. Not yet run on GitHub: needs
   a push to the fork.
+- L.1a (2026-10-18): Linux uses XDG folders: data and socket in
+  `$XDG_DATA_HOME/isocast`, logs in `$XDG_STATE_HOME/isocast/logs`, UI
+  prefs in `$XDG_CONFIG_HOME/isocast`, OBS import from
+  `$XDG_CONFIG_HOME/obs-studio`. macOS and Windows paths unchanged.
+  Verified with XDG variables pointed at `target/scratch/xdg`: the daemon
+  created `isocastd.sock`, `.lock` and `.log` there and the CLI logged to
+  `state/isocast/logs`. Protocol, diagnostics and UI clippy and tests pass.
+- L.1b (2026-10-18): no code needed. `isocast doctor` launches the adjacent
+  `target/debug/isocastd` on Linux, `isocast restart` restarts it, and
+  `isocast devices` exits 1 with the stub's "not supported on linux" error.

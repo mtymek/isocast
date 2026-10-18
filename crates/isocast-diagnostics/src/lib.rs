@@ -78,6 +78,8 @@ pub fn logs_folder() -> PathBuf {
     let home = isocast_protocol::api::home_folder();
     if cfg!(target_os = "macos") {
         home.join("Library/Logs/Isocast")
+    } else if cfg!(target_os = "linux") {
+        isocast_protocol::api::xdg_folder("XDG_STATE_HOME", ".local/state").join("isocast/logs")
     } else if cfg!(windows) {
         isocast_protocol::api::support_folder().join("logs")
     } else {

@@ -33,5 +33,13 @@ in `PLAN_LINUX.md`.
   against a `--enable-gpl` FFmpeg: shipped binaries would become GPL.
 - 2026-10-18: Wayland + xdg-desktop-portal first. Plain X11 without a
   portal is unsupported until someone needs it.
+- 2026-10-18: The socket stays in `$XDG_DATA_HOME/isocast`, not
+  `$XDG_RUNTIME_DIR`. `lock_path()` and `setup_path()` derive from the
+  socket path, and the runtime dir is tmpfs, so moving the socket would
+  lose `setup.toml` on reboot. Revisit only if a socket outside the data
+  folder is needed (Flatpak may want it).
 
 ## Gotchas
+
+- `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
+  machine facts are not read on Linux yet (L.1c).

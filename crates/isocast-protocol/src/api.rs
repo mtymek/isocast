@@ -1881,8 +1881,7 @@ pub fn is_engine_executable(name: &std::ffi::OsStr) -> bool {
 }
 
 /// Where the daemon listens: `$ISOCAST_SOCKET`, or else
-/// `~/Library/Application Support/Isocast/isocastd.sock` on macOS and
-/// `~/.isocast/isocastd.sock` elsewhere.
+/// `isocastd.sock` in [`support_folder`].
 pub fn socket_path() -> PathBuf {
     if let Some(path) = std::env::var_os("ISOCAST_SOCKET") {
         return PathBuf::from(path);
@@ -1980,13 +1979,24 @@ pub fn home_folder() -> PathBuf {
     home.unwrap_or_default()
 }
 
+/// An XDG base directory: `$var` if it holds an absolute path (the spec
+/// says to ignore relative ones), else `fallback` in the home folder.
+pub fn xdg_folder(var: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home_folder().join(fallback))
+}
+
 /// `~/Library/Application Support/Isocast` on macOS, `%LOCALAPPDATA%/Isocast`
 /// on Windows (the LocalAppData known folder when the variable is unset),
-/// `~/.isocast` elsewhere.
+/// `$XDG_DATA_HOME/isocast` on Linux, `~/.isocast` elsewhere.
 pub fn support_folder() -> PathBuf {
     let home = home_folder();
     if cfg!(target_os = "macos") {
         home.join("Library/Application Support/Isocast")
+    } else if cfg!(target_os = "linux") {
+        xdg_folder("XDG_DATA_HOME", ".local/share").join("isocast")
     } else if cfg!(windows) {
         windows_folder("LOCALAPPDATA", "AppData/Local").join("Isocast")
     } else {
@@ -3533,11 +3543,17 @@ mod tests {
             assert_eq!(home_folder(), home);
             assert_eq!(
                 support_folder(),
-                home.join(if cfg!(target_os = "macos") {
-                    "Library/Application Support/Isocast"
+                if cfg!(target_os = "macos") {
+                    home.join("Library/Application Support/Isocast")
+                } else if cfg!(target_os = "linux") {
+                    std::env::var_os("XDG_DATA_HOME")
+                        .map(PathBuf::from)
+                        .filter(|path| path.is_absolute())
+                        .unwrap_or_else(|| home.join(".local/share"))
+                        .join("isocast")
                 } else {
-                    ".isocast"
-                })
+                    home.join(".isocast")
+                }
             );
         }
     }
