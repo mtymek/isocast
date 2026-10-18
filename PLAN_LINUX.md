@@ -193,8 +193,13 @@ upstream don't conflict in the 8 000-line notes file.
     H.264 monitors.
   - [x] **L.7b Media reader.** libav decoding for media sources, stingers
     and the editor (`open_media`).
-  - [ ] **L.7c Virtual camera.** A PipeWire video source node (or
-    v4l2loopback) other apps can open as a camera.
+  - [x] **L.7c Virtual camera.** A PipeWire video source node other apps
+    can open as a camera.
+  - [ ] **L.7d v4l2loopback camera.** For apps that read only V4L2
+    devices (Zoom, Discord, OBS): write frames to a v4l2loopback device
+    when one is present; installing the module needs root.
+  - [ ] **L.7e Browser source.** Web pages as sources need an embedded
+    web engine (WebKitGTK or CEF); a decision for the fork owner.
 - [ ] **L.8 Packaging.** Flatpak and an AUR package; install, upgrade and
   uninstall verified locally. Publishing waits for the fork owner.
 - [ ] **L.9 e2e, stress and alpha.** Port the synthetic e2e and stress
@@ -429,3 +434,12 @@ upstream don't conflict in the 8 000-line notes file.
   earlier synthetic ISO recorded a 5.0 s program (300 frames, 5.0 s AAC)
   with the right picture, and the clip's beeps and burnt-in clock agree
   (both 0.483 s from program time).
+- L.7c (2026-10-18): the virtual camera is a PipeWire node
+  `isocast-virtual-camera` ("Isocast Virtual Camera", `Video/Source`,
+  role Camera), driving its own clock and taking BGRx at the camera's size
+  and rate; frames reach its loop thread through a 2-deep queue (full: the
+  frame counts as dropped). Negotiation needed what `pipewire-vircam`
+  does: no `ALLOC_BUFFERS`, no `dataType` in the Buffers reply, a Header
+  meta. Verified: GStreamer `pipewiresrc target-object=isocast-virtual-
+  camera` read 30 frames of the live program (correct picture, 60 fps
+  counter); 462 frames sent, 0 dropped; stopping removes the node.

@@ -39,6 +39,8 @@ mod system;
 #[cfg(target_os = "linux")]
 mod unsupported;
 #[cfg(target_os = "linux")]
+mod vcam;
+#[cfg(target_os = "linux")]
 mod writer;
 
 #[cfg(target_os = "linux")]
@@ -139,6 +141,19 @@ mod platform {
                 }
                 _ => isocast_engine::OPEN_TIMEOUT,
             }
+        }
+
+        /// A PipeWire camera node apps can choose (browsers and other
+        /// PipeWire camera clients).
+        fn virtual_camera_sink(
+            &self,
+            width: u32,
+            height: u32,
+            fps: u32,
+        ) -> Result<Box<dyn isocast_engine::record::CameraSink<Frame>>> {
+            Ok(Box::new(crate::vcam::PipeWireCamera::new(
+                width, height, fps,
+            )?))
         }
 
         fn devices(&self) -> Result<Devices> {

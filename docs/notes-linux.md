@@ -42,7 +42,9 @@ in `PLAN_LINUX.md`.
   recording program + ISOs from cameras, microphones, system audio, app
   audio and screens (the screen-sharing dialog the first time). Global
   hotkeys need `scripts/linux-dev-install.sh` once. Streaming and media
-  sources work too. Not yet: the virtual camera (L.7c), packaging (L.8).
+  sources work too. The virtual camera is a
+  PipeWire camera (browsers, the camera portal). Not yet: V4L2-only apps
+  (L.7d), browser sources (L.7e), packaging (L.8).
 
 ## Decisions
 
@@ -200,3 +202,7 @@ in `PLAN_LINUX.md`.
   This Hyprland build's `hyprctl dispatch` takes Lua:
   `hyprctl dispatch 'hl.dsp.global("dev.isocast.Isocast:<id>")'`.
 - Hyprland keeps listing a shortcut after its portal session closes.
+- A PipeWire video source made with `pw_stream` negotiates only with
+  `DRIVER | MAP_BUFFERS` (not `ALLOC_BUFFERS`), a Buffers reply without
+  `dataType`, and a Header meta; otherwise consumers fail with "target
+  not found" or never get a format. `pipewire-vircam`'s source showed it.
