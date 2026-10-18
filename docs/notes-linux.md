@@ -18,6 +18,11 @@ in `PLAN_LINUX.md`.
 
 ## Waiting on the fork owner
 
+- **Intel VA-API driver (optional).** VA-API fails to initialise on the
+  Intel iGPU (`/dev/dri/renderD128`), most likely because
+  `intel-media-driver` isn't installed. Encoding uses the AMD GPU, so
+  nothing is blocked. To enable it: `sudo pacman -S intel-media-driver`.
+
 - **Push to run Linux CI (blocks L.0b).** `jj bookmark move main --to <latest Linux commit>`
   (or a `linux/*` bookmark), then `jj git push -b main`. The fork also
   inherits upstream's macOS, release and benchmark workflows; disable them
@@ -75,6 +80,12 @@ in `PLAN_LINUX.md`.
   linear contents; the `gpu` contract's exact-pixel checks catch a driver
   that doesn't.
 
+- 2026-10-18: The software H.264 fallback is libx264 (GPL), opened by
+  name at run time from the system FFmpeg. Packaging (L.8) must ship
+  against an LGPL FFmpeg or rely on the system's.
+- 2026-10-18: Video quality maps Isocast's 1–100 scale to constant QP
+  `round(40 - q × 0.25)` (70 → 22) for VA-API CQP and libx264 CRF.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
@@ -95,3 +106,12 @@ in `PLAN_LINUX.md`.
 - `target/scratch/setups/synthetic.toml` is a permission-free setup (two
   test patterns, text, tone) for compositing and recording checks. Apply
   it to a scratch daemon with `isocast apply --revision 0 <file>`.
+- FFmpeg's VA-API H.264 extradata (global header) has different SPS VUI
+  and PPS bytes from the parameter sets sent in-band with the first IDR;
+  the mux refuses the mismatch (`video parameter sets changed`). The writer
+  takes the in-band sets from a twin encoder's first picture.
+- With frames in CPU memory, a discrete GPU compositing 1080p60 plus ISOs
+  sits at 99% busy (`/sys/class/drm/card2/device/gpu_busy_percent`) and
+  drops about half the frames. `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/intel_icd.json`
+  makes wgpu use the Intel iGPU instead, which records with 0 drops.
+- `isocast debug on` refuses until a live setup exists; apply one first.

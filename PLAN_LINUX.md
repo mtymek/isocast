@@ -109,10 +109,21 @@ upstream don't conflict in the 8 000-line notes file.
     importer for CPU frames (upload) and Y'CbCr pools, so the engine
     composites; JPEG monitors. `gpu` contract passes; `isocast frame`
     saves the program.
-  - [ ] **L.2c Encode and write.** libavcodec H.264/HEVC (VA-API, software
-    fallback) and AAC into `isocast-mux`, with Linux durability and launch
-    recovery. A synthetic program and ISOs record decodable, aligned files;
-    `normal`, `pressure`, `commit`, `ownership` and `recover` contracts pass.
+  - [x] **L.2c Encode and write.** libavcodec H.264/HEVC on VA-API (libx264
+    fallback for H.264) and AAC into `isocast-mux`, video on a thread per
+    file. A synthetic program and ISOs record complete, decodable, aligned
+    files when compositing keeps up (see L.2e).
+  - [ ] **L.2d Recovery and contracts.** `recover_file` through the mux's
+    repair on Linux (its recovery module is Windows-only today), launch
+    recovery of killed takes, and the `normal`, `pressure`, `commit`,
+    `ownership` and `recover` contracts.
+  - [ ] **L.2e Discrete GPU frames.** On the RX 5700 XT the compositor
+    drawing into and sampling CPU-memory frames over PCIe holds the GPU at
+    99% busy and drops about half the frames of a 1080p60 program plus
+    ISOs. Keep render targets in device-local memory on discrete GPUs
+    (DMA-BUF frames VA-API imports directly), or composite on an
+    integrated GPU when there is one. Done when the synthetic setup records
+    with 0 dropped frames on the discrete GPU.
 - [ ] **L.3 Encoders.** libavcodec VA-API and NVENC, LGPL software last;
   DMA-BUF input where the driver allows; program priority and ISO shedding
   within detected session limits; clear errors for unsupported codecs.
@@ -198,3 +209,16 @@ upstream don't conflict in the 8 000-line notes file.
   import, target and cached paths; pools refill after texture drop), and
   `isocast frame` on a synthetic setup (two test patterns and a text
   source) saved a correct 1920×1080 program at frame 24, T+0.400 s.
+- L.2c (2026-10-18): Linux records. `LinuxPlatform::create_writer` opens
+  VA-API H.264/HEVC on the first working render node (libx264 for H.264
+  without it) and FFmpeg's AAC, and writes through `isocast-mux`
+  (fragments every 500 ms, crash-safe commit). The avcC/hvcC comes from a
+  twin encoder's first keyframe, because VA-API's extradata SPS/PPS differ
+  from the in-band ones. Video encodes on a thread per file behind a
+  4-picture queue. Verified with the release daemon and the synthetic
+  setup, compositing on the Intel iGPU (`VK_DRIVER_FILES=.../intel_icd.json`)
+  and encoding on the RX 5700 XT: 10 s take, 0 dropped frames, program
+  and BARS 600 frames, SMALL 300 frames, AAC 10.0 s each, full decode
+  clean, beep onset 0.700021 s against flash 0.700 s. Compositing on the
+  RX 5700 XT drops about half (L.2e). `doctor` lists `H.264 (VA-API,
+  /dev/dri/renderD129), HEVC (VA-API, /dev/dri/renderD129)`.

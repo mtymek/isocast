@@ -26,8 +26,7 @@ pub fn machine() -> Machine {
             os_name(&os_release).unwrap_or_else(|| "Linux".into()),
             kernel_release().unwrap_or_default()
         ),
-        // Found once hardware encoding exists (L.3).
-        hardware_encoders: Vec::new(),
+        hardware_encoders: crate::encode::hardware_encoders(),
     }
 }
 

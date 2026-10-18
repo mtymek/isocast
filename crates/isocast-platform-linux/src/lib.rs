@@ -5,6 +5,10 @@
 //! fails with a clear error, as the stub platform's does.
 
 #[cfg(target_os = "linux")]
+mod codec_config;
+#[cfg(target_os = "linux")]
+mod encode;
+#[cfg(target_os = "linux")]
 pub mod frames;
 #[cfg(target_os = "linux")]
 mod gpu;
@@ -16,6 +20,8 @@ pub mod plugin;
 mod system;
 #[cfg(target_os = "linux")]
 mod unsupported;
+#[cfg(target_os = "linux")]
+mod writer;
 
 #[cfg(target_os = "linux")]
 pub use platform::LinuxPlatform;
@@ -61,7 +67,7 @@ mod platform {
     impl Platform for LinuxPlatform {
         type Frame = Frame;
         type FramePool = FramePool;
-        type Writer = Unsupported;
+        type Writer = crate::writer::Writer;
         type Capture = Unsupported;
         type Importer = Importer;
         type Media = Unsupported;
@@ -218,8 +224,8 @@ mod platform {
             crate::jpeg::encode(frame, max_width, quality)
         }
 
-        fn create_writer(&self, spec: &WriterSpec) -> Result<Unsupported> {
-            Err(unsupported(&format!("recording {}", spec.path.display())))
+        fn create_writer(&self, spec: &WriterSpec) -> Result<crate::writer::Writer> {
+            crate::writer::Writer::create(spec)
         }
 
         fn recover_file(
