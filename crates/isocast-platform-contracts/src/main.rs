@@ -75,7 +75,11 @@ fn run() -> Result<Value> {
                     folder,
                 )
             }
-            #[cfg(not(any(target_os = "macos", windows)))]
+            #[cfg(target_os = "linux")]
+            {
+                dispatch(&isocast_platform_linux::LinuxPlatform, case, folder)
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
             {
                 Ok(
                     json!({"unavailable": "no native Platform implementation is selected on this OS; run stub/core only for the explicit CPU placeholder"}),
