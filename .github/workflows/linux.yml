@@ -27,9 +27,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # isocastd links OpenSSL; isocast-ui links fontconfig and freetype.
+      # isocastd links OpenSSL and FFmpeg (bindings generated with
+      # libclang); isocast-ui links fontconfig and freetype. Mesa's lavapipe
+      # is a software Vulkan device for the GPU paths on a GPU-less runner.
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libfontconfig1-dev
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          pkg-config clang libclang-dev libssl-dev libfontconfig1-dev
+          libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev
+          mesa-vulkan-drivers
 
       - name: Rust toolchain
         run: |
