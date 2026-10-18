@@ -173,7 +173,7 @@ upstream don't conflict in the 8 000-line notes file.
 - [ ] **L.6 App and shared surfaces.**
   - [x] **L.6a Shared surfaces.** DMA-BUF surfaces handed over with
     `SCM_RIGHTS`; the app's preview and `isocast frames --shared` work.
-  - [ ] **L.6b Monitors and projectors.** Every place the app shows
+  - [x] **L.6b Monitors and projectors.** Every place the app shows
     frames (source monitors, projectors, multiview) checked on Linux.
   - [x] **L.6c Global shortcuts.** The portal's GlobalShortcuts for
     hotkeys.
@@ -405,3 +405,7 @@ upstream don't conflict in the 8 000-line notes file.
   listed `dev.isocast.Isocast:isotest`, and `hyprctl dispatch
   'hl.dsp.global("dev.isocast.Isocast:isotest")'` produced `hotkey_fired`
   (studio.toggle, source global, press).
+- L.6b (2026-10-18): source and scene monitors (what the app's monitors
+  and projectors use) share frames on Linux: `isocast frames small` and
+  `scene:main` with `--shared --check` each received 95 frames through
+  `dmabuf-socket`, all read back drawn.
