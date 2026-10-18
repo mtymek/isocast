@@ -76,7 +76,7 @@ upstream don't conflict in the 8 000-line notes file.
   - [ ] **L.0b Linux CI workflow.** `.github/workflows/linux.yml` running
     L.0a's gates on `ubuntu-latest`. Done when a hosted run on the fork is
     green (needs the fork owner to push).
-- [ ] **L.1 Portable paths and services.** Same output on macOS, Linux
+- [x] **L.1 Portable paths and services.** Same output on macOS, Linux
   defaults on Linux.
   - [x] **L.1a XDG paths.** One helper for data, log and preferences
     directories; replace the `~/Library` paths in `isocast-protocol`
@@ -91,15 +91,28 @@ upstream don't conflict in the 8 000-line notes file.
   - [x] **L.1d Plugin sandbox.** Landlock (ABI 10) for process plugins,
     reported honestly when the kernel lacks it. Plugin peer and process
     identity from `SO_PEERCRED` and `/proc`.
-  - [ ] **L.1e Linux recordings folder.** Default to `~/Videos/Isocast`
-    (`$XDG_VIDEOS_DIR`) instead of `~/Movies/Isocast` on Linux, in setups
-    made by `setup init`, OBS import and MCP text.
+  - [x] **L.1e Linux recordings folder.** Default to `~/Videos/Isocast`
+    instead of `~/Movies/Isocast` on Linux, in new setups and profiles and
+    the OBS-import fallback. Help and MCP text that names `~/Movies` moves
+    to the L.6 wording pass.
 - [ ] **L.2 Linux synthetic platform.** `isocast-platform-linux` with the
-  monotonic clock, machine facts from `/proc` and `/sys`, volumes via
-  `statvfs`, bounded frame pools, wgpu Vulkan backend, frame importer,
-  synthetic sources and `isocast-mux` writing with Linux durability. Done
-  when a synthetic program plus ISOs produce decodable, aligned files here
-  and under lavapipe, and the core contract suite passes.
+  monotonic clock, machine facts, volumes, a Vulkan compositor and
+  `isocast-mux` writing with Linux durability. Done when a synthetic
+  program plus ISOs produce decodable, aligned files here and under
+  lavapipe, and the core contract suite passes.
+  - [x] **L.2a Platform skeleton.** `LinuxPlatform` selected by the daemon
+    and the contract harness: `CLOCK_MONOTONIC` clock, absolute
+    `clock_nanosleep` deadlines, machine facts from `/proc` and
+    `/etc/os-release`, `statfs` volumes, CPU times, write latency. The rest
+    delegates to the stub until replaced.
+  - [ ] **L.2b Vulkan compositing.** wgpu `vulkan` on Linux; a frame
+    importer for CPU frames (upload) and Y'CbCr pools, so the engine
+    composites; JPEG monitors. `gpu` contract passes; `isocast frame`
+    saves the program.
+  - [ ] **L.2c Encode and write.** libavcodec H.264/HEVC (VA-API, software
+    fallback) and AAC into `isocast-mux`, with Linux durability and launch
+    recovery. A synthetic program and ISOs record decodable, aligned files;
+    `normal`, `pressure`, `commit`, `ownership` and `recover` contracts pass.
 - [ ] **L.3 Encoders.** libavcodec VA-API and NVENC, LGPL software last;
   DMA-BUF input where the driver allows; program priority and ISO shedding
   within detected session limits; clear errors for unsupported codecs.
@@ -112,7 +125,8 @@ upstream don't conflict in the 8 000-line notes file.
   stub or lavapipe run does not count.
 - [ ] **L.6 App and shared surfaces.** Slint on Wayland and X11, DMA-BUF
   previews and monitors, GlobalShortcuts, Secret Service, Linux wording in
-  onboarding, settings, errors and shortcut labels.
+  onboarding, settings, errors, shortcut labels, CLI help and MCP tool
+  descriptions (`~/Movies/Isocast`, "this Mac", Finder, Keychain).
 - [ ] **L.7 Media, streaming, virtual camera.** libav media reader for
   media sources and the editor, streaming through the existing path,
   PipeWire virtual camera.
@@ -163,3 +177,13 @@ upstream don't conflict in the 8 000-line notes file.
   its data folder, `status` on its socket, serving on 127.0.0.1, `/dev/null`
   and `/usr/bin/true` were allowed; with `network` granted TCP and UDP
   connected. The pid file's start time matched `/proc/<pid>/stat`.
+- L.1e (2026-10-18): `DEFAULT_FOLDER` is `~/Videos/Isocast` on Linux, and
+  an OBS import without a recordings folder falls back to `~/Videos`.
+  Verified: `isocast profile new` on the scratch daemon exported
+  `folder = "~/Videos/Isocast"`. Protocol clippy and 88 tests pass.
+- L.2a (2026-10-18): `LinuxPlatform` replaces the stub on Linux in the
+  daemon and contract harness. `isocast doctor` prints `Intel(R) Core(TM)
+  Ultra 7 270K Plus · 31 GB · 24 cores · Omarchy, Linux
+  7.2.8-7-omarchy-bore`. Native `clock` and `pools` contracts pass (1 ms
+  `sleep_until` overshoot 58 µs); `gpu` panics with no wgpu backend, which
+  L.2b adds.

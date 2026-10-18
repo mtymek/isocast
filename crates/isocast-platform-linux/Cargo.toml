@@ -4,8 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Linux back end for Isocast. So far: running process plugins in a Landlock sandbox."
+description = "Linux back end for Isocast, built up in steps (PLAN_LINUX.md)."
 
 [target.'cfg(target_os = "linux")'.dependencies]
+anyhow = "1.0.104"
 isocast-diagnostics = { path = "../isocast-diagnostics" }
+isocast-engine = { path = "../isocast-engine" }
+isocast-platform-stub = { path = "../isocast-platform-stub" }
+isocast-protocol = { path = "../isocast-protocol" }
+isocast-surfaces = { path = "../isocast-surfaces" }
 libc = "0.2"
+# Pinned like the engine's: only for the `wgpu::Texture` in `Platform`'s
+# signatures until the Vulkan importer (L.2b).
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "wgsl"] }

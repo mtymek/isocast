@@ -49,6 +49,21 @@ in `PLAN_LINUX.md`.
 - 2026-10-18: Linux platform code lives in `isocast-platform-linux`
   (empty on other OSes, so the workspace still builds everywhere).
 
+- 2026-10-18: Linux recordings default to the literal `~/Videos/Isocast`,
+  not `$XDG_VIDEOS_DIR` from `user-dirs.dirs`: the default is a constant
+  written into setup files, and a localized folder name would make setups
+  differ between machines.
+
+- 2026-10-18: `LinuxPlatform` reuses the stub's CPU `Frame`, `FramePool`
+  and `Unsupported` types and delegates unbuilt methods to it, so each L.2
+  step replaces one piece. The clock is `CLOCK_MONOTONIC` since boot, not a
+  process origin, so PipeWire and V4L2 timestamps map 1:1.
+- 2026-10-18: `real_time_thread` is a no-op on Linux for now. Raising
+  priority needs rtkit over D-Bus or `CAP_SYS_NICE`; revisit when L.4
+  measures capture jitter.
+- 2026-10-18: FUSE volumes count as local (ntfs-3g and sshfs share one
+  magic number); the write-speed test still catches slow ones.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
@@ -60,3 +75,6 @@ in `PLAN_LINUX.md`.
   shell's own command line. Kill daemons by pid.
 - `cargo clippy` after a small edit can finish in under a second; that is
   incremental checking, not a skipped crate.
+- Run the contract harness as `target/debug/isocast-platform-contracts
+  native <case> <folder>`, where `<folder>` holds a `.contract-owner` file
+  containing `isocast-platform-contracts`.

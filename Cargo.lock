@@ -3227,6 +3227,7 @@ version = "0.0.8"
 dependencies = [
  "anyhow",
  "isocast-engine",
+ "isocast-platform-linux",
  "isocast-platform-macos",
  "isocast-platform-stub",
  "isocast-platform-windows",
@@ -3239,8 +3240,14 @@ dependencies = [
 name = "isocast-platform-linux"
 version = "0.0.8"
 dependencies = [
+ "anyhow",
  "isocast-diagnostics",
+ "isocast-engine",
+ "isocast-platform-stub",
+ "isocast-protocol",
+ "isocast-surfaces",
  "libc",
+ "wgpu",
 ]
 
 [[package]]
