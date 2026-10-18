@@ -19,6 +19,7 @@ mod portal;
 mod pw_loop;
 mod system;
 mod video_encoder;
+mod virtual_camera;
 mod writer;
 
 pub use platform::LinuxPlatform;

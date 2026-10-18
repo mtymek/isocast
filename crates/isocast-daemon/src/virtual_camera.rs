@@ -66,6 +66,8 @@ impl CameraOutput {
         if status.transport.is_empty() {
             status.transport = if cfg!(target_os = "macos") {
                 "cmio-iosurface"
+            } else if cfg!(target_os = "linux") {
+                "pipewire-node"
             } else {
                 "unsupported"
             }

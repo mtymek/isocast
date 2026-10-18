@@ -48,6 +48,18 @@ impl Platform for LinuxPlatform {
     type AudioEncoder = crate::audio::StreamEncoder;
     type SharedSurface = isocast_surfaces::Surface;
 
+    /// A PipeWire camera node apps reading cameras through PipeWire can
+    /// choose; nothing to install.
+    fn virtual_camera_sink(
+        &self,
+        width: u32,
+        height: u32,
+        fps: u32,
+    ) -> Result<Box<dyn isocast_engine::record::CameraSink<Frame>>> {
+        Ok(Box::new(crate::virtual_camera::PipeWireCamera::new(
+            width, height, fps,
+        )?))
+    }
     fn now(&self) -> Time {
         system::now()
     }
