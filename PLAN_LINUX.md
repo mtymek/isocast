@@ -84,12 +84,15 @@ upstream don't conflict in the 8 000-line notes file.
   - [x] **L.1b Daemon launch.** The CLI finds and spawns `isocastd` on
     Linux without the signed dev app; `isocast status` and `isocast
     restart` work against the stub.
-  - [ ] **L.1c Diagnostics.** Crash reports from `coredumpctl` in the bug
-    report bundle; process counters from `/proc`.
+  - [x] **L.1c Diagnostics.** Crash reports from `coredumpctl` in the bug
+    report bundle; process memory from `/proc` in developer mode. Machine
+    facts (chip, RAM, CPU time, volumes) are `Platform` methods and move to
+    L.2.
   - [ ] **L.1d Plugin sandbox.** Landlock + seccomp for process plugins,
     reported honestly when the kernel lacks Landlock.
 - [ ] **L.2 Linux synthetic platform.** `isocast-platform-linux` with the
-  monotonic clock, bounded frame pools, wgpu Vulkan backend, frame importer,
+  monotonic clock, machine facts from `/proc` and `/sys`, volumes via
+  `statvfs`, bounded frame pools, wgpu Vulkan backend, frame importer,
   synthetic sources and `isocast-mux` writing with Linux durability. Done
   when a synthetic program plus ISOs produce decodable, aligned files here
   and under lavapipe, and the core contract suite passes.
@@ -134,3 +137,11 @@ upstream don't conflict in the 8 000-line notes file.
 - L.1b (2026-10-18): no code needed. `isocast doctor` launches the adjacent
   `target/debug/isocastd` on Linux, `isocast restart` restarts it, and
   `isocast devices` exits 1 with the stub's "not supported on linux" error.
+- L.1c (2026-10-18): bug reports include this user's systemd-coredump
+  records for Isocast executables (`linux-crashes/`, newest ten, with the
+  stack trace). Hostname, user, machine id, boot id and session-unit lines
+  are dropped; the redactor rewrites home paths. Verified by aborting a
+  scratch daemon (SIGABRT) and reading the entry back with `isocast
+  report-file` from `isocast report --preview`. Developer mode reports
+  `VmRSS`: `isocast debug status --json` gave 43 900 928 bytes against
+  `VmRSS: 42956 kB` in `/proc` a moment later.

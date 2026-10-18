@@ -43,3 +43,8 @@ in `PLAN_LINUX.md`.
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
   machine facts are not read on Linux yet (L.1c).
+- An external `kill -SEGV` does not crash `isocastd`: wasmtime installs a
+  SIGSEGV handler for its traps. Use `kill -ABRT` to produce a test
+  coredump.
+- `pkill -f 'isocastd ...'` inside a shell command also matches that
+  shell's own command line. Kill daemons by pid.

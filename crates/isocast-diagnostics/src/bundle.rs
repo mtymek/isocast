@@ -300,16 +300,7 @@ pub fn generate(
         .rev()
         .filter(|path| {
             let name = path.file_name().unwrap().to_string_lossy().to_lowercase();
-            [
-                "isocastd-",
-                "isocast-",
-                "isocast-app-",
-                "isocast-ui-",
-                "isocast_",
-                "isocastd_",
-            ]
-            .iter()
-            .any(|p| name.starts_with(p))
+            CRASH_PREFIXES.iter().any(|p| name.starts_with(p))
         })
         .take(10)
     {
@@ -329,6 +320,8 @@ pub fn generate(
             &mut omitted,
         );
     }
+    #[cfg(target_os = "linux")]
+    collect_coredumps(&mut contents, &mut redactor, &mut omitted);
     let mut manifests = manifest_folders
         .iter()
         .flat_map(|dir| files(dir))
@@ -618,6 +611,97 @@ fn incident_summary(record: &Value) -> Value {
         "recording_active":fields["recording"].is_object(),"paused":fields["recording"]["paused"],"recording_elapsed_seconds":fields["recording"]["elapsed_seconds"],
         "outputs":fields["recording"]["files"],"stream_state":fields["stream"]["state"],"stream_elapsed_seconds":fields["stream"]["elapsed_seconds"],
         "stream_dropped_frames":fields["stream"]["dropped_frames"],"stream_audio_dropouts":fields["stream"]["audio_dropouts"],"process":fields["system"]["process"]})
+}
+
+/// File-name prefixes of Isocast's own crash reports.
+const CRASH_PREFIXES: [&str; 6] = [
+    "isocastd-",
+    "isocast-",
+    "isocast-app-",
+    "isocast-ui-",
+    "isocast_",
+    "isocastd_",
+];
+
+/// `coredumpctl info` fields that identify the person or machine (user and
+/// host names, machine and boot ids, session units), left out of reports.
+#[cfg(target_os = "linux")]
+const COREDUMP_PRIVATE: [&str; 11] = [
+    "UID:",
+    "GID:",
+    "Owner UID:",
+    "Hostname:",
+    "Machine ID:",
+    "Boot ID:",
+    "Storage:",
+    "Control Group:",
+    "Unit:",
+    "User Unit:",
+    "Slice:",
+];
+
+/// The newest ten of this user's systemd-coredump records for Isocast
+/// executables, as `coredumpctl info` prints them (with a backtrace when
+/// symbols are available), under `linux-crashes/`. Nothing when
+/// `coredumpctl` is missing or fails.
+#[cfg(target_os = "linux")]
+fn collect_coredumps(
+    contents: &mut BTreeMap<String, String>,
+    redactor: &mut Redactor,
+    omitted: &mut Vec<String>,
+) {
+    use std::process::Command;
+    let run = |args: &[&str]| {
+        Command::new("coredumpctl")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let Some(list) = run(&["list", "--no-pager", "--json=short"]) else {
+        return;
+    };
+    let Ok(Value::Array(entries)) = serde_json::from_str::<Value>(&list) else {
+        return;
+    };
+    // SAFETY: getuid has no preconditions and cannot fail.
+    let uid = u64::from(unsafe { libc::getuid() });
+    let mut ours = entries
+        .iter()
+        .filter_map(|entry| {
+            let exe = Path::new(entry["exe"].as_str()?).file_name()?;
+            let exe = exe.to_string_lossy().to_lowercase();
+            let name = format!("{exe}-");
+            (entry["uid"].as_u64() == Some(uid)
+                && CRASH_PREFIXES.iter().any(|p| name.starts_with(p)))
+            .then_some((entry["time"].as_u64()?, entry["pid"].as_u64()?, exe))
+        })
+        .collect::<Vec<_>>();
+    ours.sort();
+    for (time, pid, exe) in ours.into_iter().rev().take(10) {
+        let name = format!("linux-crashes/{time}-{pid}-{exe}.txt");
+        let current: usize = contents.values().map(String::len).sum();
+        let Some(info) = run(&["info", "--no-pager", &pid.to_string()]) else {
+            omitted.push(format!("{name}: coredumpctl info failed"));
+            continue;
+        };
+        if info.len() as u64 > MAX_FILE || current.saturating_add(info.len()) > MAX_BUNDLE {
+            omitted.push(format!("{name}: size/type limit"));
+            continue;
+        }
+        let safe = info
+            .lines()
+            .filter(|line| {
+                let line = line.trim_start();
+                !COREDUMP_PRIVATE.iter().any(|key| line.starts_with(key))
+            })
+            .map(|line| redactor.text(line))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        contents.insert(name, safe);
+    }
 }
 
 fn collect(
