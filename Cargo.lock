@@ -3132,6 +3132,7 @@ dependencies = [
  "isocast-engine",
  "isocast-ipc",
  "isocast-obsws",
+ "isocast-platform-linux",
  "isocast-platform-macos",
  "isocast-platform-stub",
  "isocast-platform-windows",
@@ -3232,6 +3233,14 @@ dependencies = [
  "isocast-protocol",
  "serde_json",
  "wgpu",
+]
+
+[[package]]
+name = "isocast-platform-linux"
+version = "0.0.7"
+dependencies = [
+ "isocast-diagnostics",
+ "libc",
 ]
 
 [[package]]

@@ -39,6 +39,16 @@ in `PLAN_LINUX.md`.
   lose `setup.toml` on reboot. Revisit only if a socket outside the data
   folder is needed (Flatpak may want it).
 
+- 2026-10-18: Plugin sandbox is Landlock only, no seccomp. It needs ABI 10
+  (Linux 7.0): ABI 9 adds `RESOLVE_UNIX` (pathname socket connects) and
+  ABI 10 adds UDP. On an older kernel plugins run unsandboxed with the
+  doctor warning, same as a Mac without `sandbox-exec`. Programs anywhere
+  in the system folders may run: the Landlock domain and `no_new_privs`
+  are inherited, so running another program gains nothing. Known gaps:
+  ICMP ping sockets, and recordings `write` reduced to read.
+- 2026-10-18: Linux platform code lives in `isocast-platform-linux`
+  (empty on other OSes, so the workspace still builds everywhere).
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:
@@ -48,3 +58,5 @@ in `PLAN_LINUX.md`.
   coredump.
 - `pkill -f 'isocastd ...'` inside a shell command also matches that
   shell's own command line. Kill daemons by pid.
+- `cargo clippy` after a small edit can finish in under a second; that is
+  incremental checking, not a skipped crate.

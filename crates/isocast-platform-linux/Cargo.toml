@@ -1,0 +1,11 @@
+[package]
+name = "isocast-platform-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Linux back end for Isocast. So far: running process plugins in a Landlock sandbox."
+
+[target.'cfg(target_os = "linux")'.dependencies]
+isocast-diagnostics = { path = "../isocast-diagnostics" }
+libc = "0.2"

@@ -88,8 +88,12 @@ upstream don't conflict in the 8 000-line notes file.
     report bundle; process memory from `/proc` in developer mode. Machine
     facts (chip, RAM, CPU time, volumes) are `Platform` methods and move to
     L.2.
-  - [ ] **L.1d Plugin sandbox.** Landlock + seccomp for process plugins,
-    reported honestly when the kernel lacks Landlock.
+  - [x] **L.1d Plugin sandbox.** Landlock (ABI 10) for process plugins,
+    reported honestly when the kernel lacks it. Plugin peer and process
+    identity from `SO_PEERCRED` and `/proc`.
+  - [ ] **L.1e Linux recordings folder.** Default to `~/Videos/Isocast`
+    (`$XDG_VIDEOS_DIR`) instead of `~/Movies/Isocast` on Linux, in setups
+    made by `setup init`, OBS import and MCP text.
 - [ ] **L.2 Linux synthetic platform.** `isocast-platform-linux` with the
   monotonic clock, machine facts from `/proc` and `/sys`, volumes via
   `statvfs`, bounded frame pools, wgpu Vulkan backend, frame importer,
@@ -145,3 +149,17 @@ upstream don't conflict in the 8 000-line notes file.
   report-file` from `isocast report --preview`. Developer mode reports
   `VmRSS`: `isocast debug status --json` gave 43 900 928 bytes against
   `VmRSS: 42956 kB` in `/proc` a moment later.
+- L.1d (2026-10-18): new crate `isocast-platform-linux` (`plugin` module).
+  Process plugins run under Landlock ABI 10 when the kernel has it: reads
+  only in system folders, their own folders and granted files; writes only
+  in their data folder; Unix sockets only in their own folder; outbound
+  TCP/UDP only with a network grant; abstract sockets and signals scoped.
+  Recordings `write` grants read only (Landlock can't allow create-only),
+  and `plugin add` says so. `peer_pid` (`SO_PEERCRED`) and `process_info`
+  (`/proc/<pid>/stat`) replace `None` on Linux, so main-socket connections
+  from unsandboxed plugins are held to their grant. Verified with a scratch
+  probe plugin: home, `/tmp`, D-Bus, PipeWire, Wayland, outbound TCP/UDP,
+  `/dev/video0`, `/dev/snd/controlC0` and signals to isocastd were denied;
+  its data folder, `status` on its socket, serving on 127.0.0.1, `/dev/null`
+  and `/usr/bin/true` were allowed; with `network` granted TCP and UDP
+  connected. The pid file's start time matched `/proc/<pid>/stat`.
