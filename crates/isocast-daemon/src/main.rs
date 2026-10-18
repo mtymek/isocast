@@ -3370,9 +3370,10 @@ impl Daemon {
         if service != StreamService::Custom && target.server.is_some() {
             return Err(failed(anyhow::anyhow!(
                 "server: only a custom service's key belongs to a server; {0} has one key \
-                 (Keychain account \"{0}\") whatever its server, so leave the server out (or \
+                 ({1} account \"{0}\") whatever its server, so leave the server out (or \
                  give the service custom)",
-                service.id()
+                service.id(),
+                isocast_protocol::platform_text::CREDENTIAL_STORE
             )));
         }
         let server = target.server.or_else(|| {
@@ -4011,7 +4012,8 @@ impl Daemon {
             )
         } else if at_capacity {
             format!(
-                "this Mac's video encoders are at capacity, so {} {verb} dropping frames",
+                "this {}'s video encoders are at capacity, so {} {verb} dropping frames",
+                isocast_protocol::platform_text::MACHINE,
                 names.join(", ")
             )
         } else {
