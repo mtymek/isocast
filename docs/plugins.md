@@ -53,6 +53,9 @@ autostart = true
 - It runs in a macOS sandbox: it can write only to its own data folder, has
   no network unless granted, cannot open cameras or microphones, and
   cannot read recordings unless granted (below).
+  On Linux the sandbox is Landlock and needs Linux 7.0 (Landlock ABI 10);
+  it also blocks the desktop session (D-Bus, PipeWire, Wayland), and a
+  `write` grant on recordings gives read access only.
 - If it exits five times in five minutes, it is turned off until you enable
   it again.
 
