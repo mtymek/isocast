@@ -16,10 +16,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # The hosted runner has 16 GB; full debug info with every job in parallel
-  # ran out of memory linking the daemon, CLI and app (exit 143).
+  # Debug info makes the build several times larger on disk.
   CARGO_PROFILE_DEV_DEBUG: 0
-  CARGO_BUILD_JOBS: 2
 
 jobs:
   workspace:
@@ -30,6 +28,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+
+      # A full debug build of the workspace with its tests takes more than
+      # the runner's free disk; the build died with exit 143 at about 8 min.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       # isocastd links OpenSSL and FFmpeg (bindings generated with
       # libclang); isocast-ui links fontconfig and freetype. Mesa's lavapipe
@@ -61,6 +67,10 @@ jobs:
       - name: Build
         id: build
         run: cargo build --locked --workspace --exclude isocast-app --all-targets
+
+      - name: Disk after build
+        if: ${{ !cancelled() }}
+        run: df -h /
 
       - name: Clippy
         run: cargo clippy --locked --keep-going --workspace --exclude isocast-app --all-targets -- -D warnings
