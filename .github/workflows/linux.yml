@@ -75,18 +75,25 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
-      # isocast-app is the retired macOS web-view app.
+      # isocast-app is the retired macOS web-view app. isocast-ui is checked
+      # on its own below: building it peaks at 13 GB in one rustc.
       - name: Build
         id: build
-        run: cargo build --locked --workspace --exclude isocast-app --all-targets
+        run: cargo build --locked --workspace --exclude isocast-app --exclude isocast-ui --all-targets
 
       - name: Disk after build
         if: ${{ !cancelled() }}
         run: df -h /
 
       - name: Clippy
-        run: cargo clippy --locked --keep-going --workspace --exclude isocast-app --all-targets -- -D warnings
+        run: cargo clippy --locked --keep-going --workspace --exclude isocast-app --exclude isocast-ui --all-targets -- -D warnings
 
       - name: Test
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: cargo test --locked --no-fail-fast --workspace --exclude isocast-app
+        run: cargo test --locked --no-fail-fast --workspace --exclude isocast-app --exclude isocast-ui
+
+      # Type-checks without code generation (8.3 GB peak), alone. Its tests
+      # need the full build and aren't run here.
+      - name: Clippy isocast-ui
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked -j1 -p isocast-ui --all-targets -- -D warnings
