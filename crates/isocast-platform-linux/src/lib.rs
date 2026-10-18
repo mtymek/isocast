@@ -13,6 +13,7 @@ mod pipewire_audio;
 mod pipewire_video;
 mod platform;
 mod playback;
+pub mod plugin;
 mod portal;
 mod pw_loop;
 mod system;
