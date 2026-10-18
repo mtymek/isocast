@@ -1,0 +1,60 @@
+name: Linux
+
+on:
+  push:
+    branches: [main, 'linux/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  workspace:
+    name: workspace (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      # isocastd links OpenSSL; isocast-ui links fontconfig and freetype.
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends pkg-config libssl-dev libfontconfig1-dev
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustc --version --verbose
+          cargo --version
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: linux-workspace
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # isocast-app is the retired macOS web-view app.
+      - name: Build
+        id: build
+        run: cargo build --locked --workspace --exclude isocast-app --all-targets
+
+      - name: Clippy
+        run: cargo clippy --locked --keep-going --workspace --exclude isocast-app --all-targets -- -D warnings
+
+      - name: Test
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cargo test --locked --no-fail-fast --workspace --exclude isocast-app

@@ -7,8 +7,22 @@ in `PLAN_LINUX.md`.
 
 - Dev machine (2026-10-18): Arch-based Omarchy, kernel 7.2, Hyprland
   (Wayland). Portal backend: xdg-desktop-portal-hyprland.
+- GPUs: AMD Radeon RX 5700 XT (RADV) and Intel Arrow Lake iGPU (Mesa).
+  System FFmpeg exposes `h264_vaapi`, `hevc_vaapi`, `av1_vaapi` and the
+  NVENC encoders (no NVIDIA card here). Audio: PipeWire 1.6.9.
+- Remotes: `origin` is the fork (`git@github.com:mtymek/isocast.git`),
+  `upstream` is `git@github.com:R44VC0RP/isocast.git`. jj `trunk()` is
+  `main@origin`.
+- Linux binaries link only OpenSSL (`isocastd`) and fontconfig/freetype
+  (`isocast-ui`) beyond libc.
 
 ## Waiting on the fork owner
+
+- **Push to run Linux CI (blocks L.0b).** `jj bookmark move main --to <latest Linux commit>`
+  (or a `linux/*` bookmark), then `jj git push -b main`. The fork also
+  inherits upstream's macOS, release and benchmark workflows; disable them
+  in the fork's Actions settings if you don't want them to run or fail on
+  missing secrets.
 
 ## Decisions
 

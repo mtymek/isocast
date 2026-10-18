@@ -68,7 +68,7 @@ upstream don't conflict in the 8 000-line notes file.
 ### L. Linux port
 
 - [ ] **L.0 Linux build baseline.**
-  - [ ] **L.0a Local gates.** `cargo build`, `cargo clippy --all-targets
+  - [x] **L.0a Local gates.** `cargo build`, `cargo clippy --all-targets
     -- -D warnings` and `cargo test` for every crate that builds on Linux
     (the set upstream builds for Windows, plus `isocast-surfaces`). Fix
     Linux-only failures without changing macOS code paths. Record the
@@ -116,3 +116,11 @@ upstream don't conflict in the 8 000-line notes file.
 
 ## Log
 
+- L.0a (2026-10-18): Linux builds, lints and tests clean with no code
+  changes. `cargo fmt --all --check`, `cargo clippy --workspace --exclude
+  isocast-app --all-targets -- -D warnings`, `cargo test --workspace
+  --exclude isocast-app` (219 tests, 0 failures) and `cargo build` all pass
+  on the dev machine. The daemon runs on `StubPlatform`, so nothing records.
+- L.0b (2026-10-18, partial): `.github/workflows/linux.yml` written; YAML
+  parses and its locked build passes locally. Not yet run on GitHub: needs
+  a push to the fork.
