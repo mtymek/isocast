@@ -4234,10 +4234,13 @@ name = "isocast-platform-credentials"
 version = "0.0.9"
 dependencies = [
  "anyhow",
+ "futures-util",
  "libc",
  "security-framework",
  "sha2",
+ "tokio",
  "windows",
+ "zbus",
 ]
 
 [[package]]
