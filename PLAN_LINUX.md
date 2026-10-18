@@ -175,7 +175,7 @@ upstream don't conflict in the 8 000-line notes file.
     `SCM_RIGHTS`; the app's preview and `isocast frames --shared` work.
   - [ ] **L.6b Monitors and projectors.** Every place the app shows
     frames (source monitors, projectors, multiview) checked on Linux.
-  - [ ] **L.6c Global shortcuts.** The portal's GlobalShortcuts for
+  - [x] **L.6c Global shortcuts.** The portal's GlobalShortcuts for
     hotkeys.
   - [x] **L.6d Secret Service.** Stream keys and other secrets in the
     desktop's keyring over D-Bus.
@@ -395,3 +395,13 @@ upstream don't conflict in the 8 000-line notes file.
   (macOS output byte-identical). Verified: doctor on Linux reads "this
   computer's encoders…"; an audit confirmed every placeholder sits in a
   formatting macro; workspace tests pass (225).
+- L.6c (2026-10-18): global hotkeys through the GlobalShortcuts portal.
+  Isocast registers as host app `dev.isocast.Isocast`, which the portal
+  only accepts with a matching desktop entry
+  (`scripts/linux-dev-install.sh` installs one for the dev build; the
+  owner approved installing it here). Each binding is a shortcut with its
+  chord as the preferred trigger; a binding the desktop gave no keys says
+  how to assign them. Verified on Hyprland: `hyprctl globalshortcuts`
+  listed `dev.isocast.Isocast:isotest`, and `hyprctl dispatch
+  'hl.dsp.global("dev.isocast.Isocast:isotest")'` produced `hotkey_fired`
+  (studio.toggle, source global, press).

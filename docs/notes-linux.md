@@ -18,6 +18,11 @@ in `PLAN_LINUX.md`.
 
 ## Waiting on the fork owner
 
+- **Desktop entry installed (2026-10-18).**
+  `~/.local/share/applications/dev.isocast.Isocast.desktop` (from
+  `scripts/linux-dev-install.sh`) lets the portals know Isocast by app id;
+  delete it to undo.
+
 - **Intel VA-API driver (optional).** VA-API fails to initialise on the
   Intel iGPU (`/dev/dri/renderD128`), most likely because
   `intel-media-driver` isn't installed. Encoding uses the AMD GPU, so
@@ -178,3 +183,10 @@ in `PLAN_LINUX.md`.
   apart instead of 21.33. Timestamping each buffer from graph time made
   the engine count 2–6 dropouts (its tolerance is 2 ms); capture times
   follow the sample count, slewed at most 200 ppm.
+- xdg-desktop-portal refuses GlobalShortcuts from a host app without an
+  app id ("An app id is required"), and registering one needs a matching
+  `.desktop` file ("App info not found"). Hyprland's portal assigns no
+  keys itself: bind them in its config (`global, dev.isocast.Isocast:<id>`).
+  This Hyprland build's `hyprctl dispatch` takes Lua:
+  `hyprctl dispatch 'hl.dsp.global("dev.isocast.Isocast:<id>")'`.
+- Hyprland keeps listing a shortcut after its portal session closes.

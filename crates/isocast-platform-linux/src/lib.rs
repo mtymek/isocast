@@ -21,6 +21,8 @@ pub mod frames;
 #[cfg(target_os = "linux")]
 mod gpu;
 #[cfg(target_os = "linux")]
+pub mod hotkeys;
+#[cfg(target_os = "linux")]
 mod jpeg;
 #[cfg(target_os = "linux")]
 mod media;
