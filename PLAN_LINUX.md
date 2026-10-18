@@ -164,7 +164,7 @@ upstream don't conflict in the 8 000-line notes file.
   - [ ] **L.4d2 DMA-BUF screen frames.** Import the portal's DMA-BUFs into
     Vulkan instead of copying shared memory (4K60 copies cost CPU).
   - [x] **L.4e Hotplug and reconnects.**
-- [ ] **L.5 Native contract qualification.** Full
+- [x] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
   stub or lavapipe run does not count.
 - [ ] **L.6 App and shared surfaces.** Slint on Wayland and X11, DMA-BUF
@@ -351,3 +351,9 @@ upstream don't conflict in the 8 000-line notes file.
   to 1.2% off for the first second of a stream, which had shown as 2–6
   audio dropouts in the first take after the engine started. Six 10 s
   BRIO takes (three right after starting the engine) then had 0 dropouts.
+- L.5 (2026-10-18): `scripts/platform-contracts.py --backend native
+  --suite full --hardware` passes every case (clock, pools, gpu, normal,
+  pressure, ownership, recovery, capture) on this machine, compositing on
+  the Intel iGPU and again forced onto the RX 5700 XT. The capture case
+  restored the kept ScreenCast token without a dialog: 6 frames, none
+  after drop, presentation 1–3 ms before arrival.
