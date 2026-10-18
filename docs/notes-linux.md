@@ -124,3 +124,10 @@ in `PLAN_LINUX.md`.
   `python3 scripts/platform-contracts.py --bin target/release/isocast-platform-contracts --work <new dir> --backend native --suite media --hardware`.
 - `pgrep -f`/`pkill -f` with a path in the pattern also matches the shell
   running the command. Use `pgrep -x isocastd`.
+- Building `isocast-ui` peaks at 13.0 GB of memory in one rustc (debug,
+  no debug info); clippy on it at 8.3 GB; isocastd and isocast 1.5 GB each.
+  On a 16 GB GitHub runner, building it beside other crates kills the
+  runner (exit 143 or "lost communication").
+- `jj new -m ...` run right after other jj commands sometimes left an
+  empty undescribed change in the chain, and `jj git push` refuses those.
+  Check `jj log -r 'main@origin::'` before pushing.

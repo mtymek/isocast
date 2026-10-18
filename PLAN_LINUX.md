@@ -67,13 +67,13 @@ upstream don't conflict in the 8 000-line notes file.
 
 ### L. Linux port
 
-- [ ] **L.0 Linux build baseline.**
+- [x] **L.0 Linux build baseline.**
   - [x] **L.0a Local gates.** `cargo build`, `cargo clippy --all-targets
     -- -D warnings` and `cargo test` for every crate that builds on Linux
     (the set upstream builds for Windows, plus `isocast-surfaces`). Fix
     Linux-only failures without changing macOS code paths. Record the
     exact crate set and any tests that need a GPU or display.
-  - [ ] **L.0b Linux CI workflow.** `.github/workflows/linux.yml` running
+  - [x] **L.0b Linux CI workflow.** `.github/workflows/linux.yml` running
     L.0a's gates on `ubuntu-latest`. Done when a hosted run on the fork is
     green (needs the fork owner to push).
 - [x] **L.1 Portable paths and services.** Same output on macOS, Linux
@@ -246,3 +246,9 @@ upstream don't conflict in the 8 000-line notes file.
   adapter. Verified: with no override the daemon logged `GPU: Intel(R)
   Graphics (ARL)` and a 10 s synthetic take recorded 0 dropped frames,
   encoding on the RX 5700 XT's VA-API.
+- L.0b (2026-10-18): Linux CI is green on the fork (run 39122298521,
+  15m44s): fmt, build, clippy and tests for the workspace without
+  `isocast-ui`, then clippy on `isocast-ui` alone. Building `isocast-ui`
+  peaks at 13.0 GB in one rustc (clippy 8.3 GB), which killed the 16 GB
+  runner (exit 143, "lost communication"); its 13 tests don't run on CI.
+  The job frees disk and adds 10 GB of swap first.
