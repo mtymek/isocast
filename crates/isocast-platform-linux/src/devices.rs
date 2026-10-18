@@ -196,7 +196,7 @@ fn formats(device: &v4l::Device) -> Vec<VideoFormat> {
     out
 }
 
-fn pipewire_init() {
+pub(crate) fn pipewire_init() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(pipewire::init);
 }
@@ -215,7 +215,7 @@ struct Node {
 
 /// PipeWire's audio sources (microphones) and sinks (outputs), the
 /// defaults marked.
-fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
+pub(crate) fn audio() -> Result<(Vec<Microphone>, Vec<AudioOutput>)> {
     pipewire_init();
     let mainloop = pipewire::main_loop::MainLoopRc::new(None).context("PipeWire main loop")?;
     let context = pipewire::context::ContextRc::new(&mainloop, None).context("PipeWire context")?;

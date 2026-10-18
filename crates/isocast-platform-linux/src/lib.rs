@@ -5,6 +5,8 @@
 //! fails with a clear error, as the stub platform's does.
 
 #[cfg(target_os = "linux")]
+mod audio;
+#[cfg(target_os = "linux")]
 mod camera;
 #[cfg(target_os = "linux")]
 mod codec_config;
@@ -59,6 +61,7 @@ mod platform {
     /// A running capture. Dropping it stops the capture.
     pub enum Capture {
         Camera(crate::camera::CameraCapture),
+        Audio(crate::audio::AudioStream),
     }
 
     /// The Linux platform: a cheap handle, like macOS's.
@@ -84,7 +87,7 @@ mod platform {
         type Capture = Capture;
         type Importer = Importer;
         type Media = Unsupported;
-        type Playback = Unsupported;
+        type Playback = crate::audio::AudioStream;
         type VideoEncoder = Unsupported;
         type AudioEncoder = Unsupported;
         type SharedSurface = isocast_surfaces::Surface;
@@ -169,6 +172,26 @@ mod platform {
                     canvas,
                 )
                 .map(Some),
+                SourceKind::Microphone(settings) => {
+                    let microphone = crate::audio::find_microphone(&settings.device)?;
+                    let pick = crate::audio::pick_channels(
+                        microphone.channels,
+                        settings.channels.as_deref(),
+                    )?;
+                    Ok(Some(Probe {
+                        device: microphone.name,
+                        video: None,
+                        channels: Some(pick.len() as u32),
+                    }))
+                }
+                SourceKind::SystemAudio(_) => {
+                    let output = crate::audio::find_output("default")?;
+                    Ok(Some(Probe {
+                        device: output.name,
+                        video: None,
+                        channels: Some(2),
+                    }))
+                }
                 other => STUB.probe(other, canvas),
             }
         }
@@ -291,24 +314,56 @@ mod platform {
 
         fn capture_microphone(
             &self,
-            _device: &str,
-            _channels: Option<&[u32]>,
-            _sink: AudioSink,
+            device: &str,
+            channels: Option<&[u32]>,
+            sink: AudioSink,
         ) -> Result<(Capture, u32)> {
-            Err(unsupported("microphone capture"))
+            let microphone = crate::audio::find_microphone(device)?;
+            let pick = crate::audio::pick_channels(microphone.channels, channels)?;
+            let platform = *self;
+            let (stream, count) = crate::audio::capture(
+                crate::audio::Source::Node {
+                    name: microphone.id,
+                    channels: microphone.channels,
+                    pick,
+                },
+                sink,
+                move || platform.now(),
+            )?;
+            Ok((Capture::Audio(stream), count))
         }
 
+        /// The default output's monitor. Leaving out apps or this process's
+        /// own playback isn't supported on Linux yet.
         fn capture_system_audio(
             &self,
-            _exclude: &[String],
-            _sink: AudioSink,
+            exclude: &[String],
+            sink: AudioSink,
             _exclude_own: bool,
         ) -> Result<(Capture, u32)> {
-            Err(unsupported("system audio capture"))
+            if !exclude.is_empty() {
+                anyhow::bail!(
+                    "exclude: leaving apps out of system audio isn't supported on Linux yet"
+                );
+            }
+            let output = crate::audio::find_output("default")?;
+            let platform = *self;
+            let (stream, count) = crate::audio::capture(
+                crate::audio::Source::Monitor { sink: output.id },
+                sink,
+                move || platform.now(),
+            )?;
+            Ok((Capture::Audio(stream), count))
         }
 
-        fn play_audio(&self, _device: &str, _render: AudioRender) -> Result<(Unsupported, String)> {
-            Err(unsupported("audio playback"))
+        fn play_audio(
+            &self,
+            device: &str,
+            render: AudioRender,
+        ) -> Result<(crate::audio::AudioStream, String)> {
+            let output = crate::audio::find_output(device)?;
+            let stream = crate::audio::play(&output.id, render)?;
+            Ok((stream, output.name))
         }
 
         fn capture_browser(

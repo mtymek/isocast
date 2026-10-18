@@ -102,6 +102,11 @@ in `PLAN_LINUX.md`.
   screen record the person at the desk, so they wait for the fork owner's
   go-ahead (synthetic sources cover everything else).
 
+- 2026-10-18: Each PipeWire capture or playback stream runs its own main
+  loop on its own thread, stopped through a `pipewire::channel`. The
+  `pipewire` crate's `v0_3_50` feature is needed for `TARGET_OBJECT` and
+  `pw_stream_get_time_n` (Ubuntu 24.04 ships PipeWire 1.0).
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:

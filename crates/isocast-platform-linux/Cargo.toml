@@ -23,7 +23,7 @@ isocast-surfaces = { path = "../isocast-surfaces" }
 libc = "0.2"
 # Microphones, system audio and playback (and screen frames from the
 # ScreenCast portal) through the PipeWire daemon.
-pipewire = "0.10.1"
+pipewire = { version = "0.10.1", features = ["v0_3_50"] }
 serde_json = "1.0.154"
 # Cameras and capture cards through Video4Linux2.
 v4l = "0.14.0"

@@ -149,8 +149,13 @@ upstream don't conflict in the 8 000-line notes file.
     PipeWire reachability and the ScreenCast portal.
   - [x] **L.4b Cameras.** V4L2 capture (MJPEG, YUYV, NV12) into frames,
     timestamps on `CLOCK_MONOTONIC`.
-  - [ ] **L.4c Audio.** PipeWire microphone, system audio (monitor of the
-    default sink), application audio and playback.
+  - [x] **L.4c Audio.** PipeWire microphone, system audio (monitor of the
+    default sink) and playback.
+  - [ ] **L.4c2 Application audio and exclusions.** One app's audio (its
+    PipeWire stream node), and system audio leaving out apps or Isocast's
+    own playback.
+  - [ ] **L.4c3 Measured A/V offset.** A clap in front of a camera with its
+    microphone: offset between the clap frame and its sound.
   - [ ] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
     PipeWire, DMA-BUF frames imported into Vulkan, restore token kept.
   - [ ] **L.4e Hotplug and reconnects.**
@@ -296,3 +301,12 @@ upstream don't conflict in the 8 000-line notes file.
   1080p30 canvas; a 20 s take recorded program 600 frames and FACECAM 579
   frames (30.0 fps over 19.3 s, start offset 0.7 s in the manifest), 0
   dropped, full decode clean, correct picture.
+- L.4c (2026-10-18): microphones and system audio record through PipeWire
+  streams (48 kHz float, the device's own channels, the engine picks one
+  or two), timed from the stream's graph clock (`CLOCK_MONOTONIC` now, less
+  delay and buffer length); monitors play through a PipeWire output
+  stream. Verified: 8 s take with the BRIO camera, BRIO microphone and
+  system audio, 0 dropped; a -20 dB 1 kHz tone played through the default
+  output during the take is in the program's track from 2.84 s to 3.88 s;
+  the BRIO microphone ISO track's level (mean -81.3 dB) matches a
+  `pw-record` of the same input (-80.8 dB).
