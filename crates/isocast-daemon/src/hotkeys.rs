@@ -12,7 +12,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use base64::Engine;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use isocast_engine::hotkeys::GlobalHotkeys;
 use isocast_engine::hotkeys::{Edge, Key};
 use isocast_protocol::Setup;
@@ -383,7 +383,7 @@ impl Daemon {
                 overflow.store(true, Ordering::Release);
             }
         });
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let registrations = if crate::PARENT_OWNED.load(Ordering::SeqCst) {
             // Foreground record previously opened no global shortcuts. A
             // private engine must not steal the app's chords or fire actions
@@ -396,9 +396,15 @@ impl Daemon {
                 })
                 .collect()
         } else {
-            isocast_platform_macos::hotkeys::MacHotkeys.replace(keys, generation, on_key)
+            #[cfg(target_os = "macos")]
+            let registered =
+                isocast_platform_macos::hotkeys::MacHotkeys.replace(keys, generation, on_key);
+            #[cfg(target_os = "linux")]
+            let registered = isocast_platform_linux::hotkeys::LinuxHotkeys::shared()
+                .replace(keys, generation, on_key);
+            registered
         };
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let registrations: Vec<Registration> = {
             let _ = on_key;
             keys.into_iter().map(|key| Registration { binding: key.binding, global: false,
