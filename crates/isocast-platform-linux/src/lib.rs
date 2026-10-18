@@ -25,6 +25,8 @@ pub mod hotkeys;
 #[cfg(target_os = "linux")]
 mod jpeg;
 #[cfg(target_os = "linux")]
+mod live;
+#[cfg(target_os = "linux")]
 mod media;
 #[cfg(target_os = "linux")]
 pub mod plugin;
@@ -95,8 +97,8 @@ mod platform {
         type Importer = Importer;
         type Media = Unsupported;
         type Playback = crate::audio::AudioStream;
-        type VideoEncoder = Unsupported;
-        type AudioEncoder = Unsupported;
+        type VideoEncoder = crate::live::LiveVideo;
+        type AudioEncoder = crate::live::LiveAudio;
         type SharedSurface = isocast_surfaces::Surface;
 
         /// `CLOCK_MONOTONIC`, the clock PipeWire and V4L2 stamp frames
@@ -425,12 +427,12 @@ mod platform {
             Ok((Capture::Audio(stream), count))
         }
 
-        fn create_video_encoder(&self, _spec: &LiveVideoSpec) -> Result<Unsupported> {
-            Err(unsupported("H.264 encoding"))
+        fn create_video_encoder(&self, spec: &LiveVideoSpec) -> Result<crate::live::LiveVideo> {
+            crate::live::LiveVideo::new(spec)
         }
 
-        fn create_audio_encoder(&self, _spec: &LiveAudioSpec) -> Result<Unsupported> {
-            Err(unsupported("AAC encoding"))
+        fn create_audio_encoder(&self, spec: &LiveAudioSpec) -> Result<crate::live::LiveAudio> {
+            crate::live::LiveAudio::new(spec)
         }
 
         fn has_secret(&self, service: &str, account: &str) -> Result<bool> {

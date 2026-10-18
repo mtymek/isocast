@@ -82,7 +82,8 @@ pub fn hardware_encoders() -> Vec<String> {
             [("H.264", "h264_vaapi"), ("HEVC", "hevc_vaapi")]
                 .into_iter()
                 .filter(|(_, name)| {
-                    VideoEncoder::open(name, Some(node), 256, 256, 30, 30_000, 70).is_ok()
+                    VideoEncoder::open(name, Some(node), 256, 256, 30, 30_000, Rate::Quality(70))
+                        .is_ok()
                 })
                 .map(|(label, _)| format!("{label} (VA-API, {})", node.to_string_lossy()))
                 .collect()
@@ -130,21 +131,39 @@ struct Opened {
     node: Option<&'static CStr>,
     fps: u32,
     timescale: u32,
-    quality: u8,
+    rate: Rate,
+}
+
+/// How an encoder spends bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rate {
+    /// Files: constant quality on Isocast's 1–100 scale, a keyframe a
+    /// second, parameter sets in the extradata.
+    Quality(u8),
+    /// Streams and monitors: a bitrate (held every second when
+    /// `constant`), a keyframe at least every `keyframe_interval` frames,
+    /// parameter sets in-band on keyframes; `low_latency` keeps no frames
+    /// back.
+    Bitrate {
+        kbps: u32,
+        constant: bool,
+        keyframe_interval: u32,
+        low_latency: bool,
+    },
 }
 
 // SAFETY: one thread uses an encoder at a time (the writer's).
 unsafe impl Send for VideoEncoder {}
 
 impl VideoEncoder {
-    /// `quality` is Isocast's 1–100 scale; `timescale` ticks per second.
+    /// `timescale` ticks per second.
     pub fn new(
         codec: Codec,
         width: u32,
         height: u32,
         fps: u32,
         timescale: u32,
-        quality: u8,
+        rate: Rate,
     ) -> Result<Self> {
         quiet();
         let mut failures = Vec::new();
@@ -153,7 +172,7 @@ impl VideoEncoder {
                 Codec::H264 => "h264_vaapi",
                 Codec::Hevc => "hevc_vaapi",
             };
-            match Self::open(name, Some(node), width, height, fps, timescale, quality) {
+            match Self::open(name, Some(node), width, height, fps, timescale, rate) {
                 Ok(encoder) => return Ok(encoder),
                 Err(error) => failures.push(format!("{name}: {error:#}")),
             }
@@ -161,7 +180,7 @@ impl VideoEncoder {
             failures.push("VA-API: no render node opens".into());
         }
         if codec == Codec::H264 {
-            match Self::open("libx264", None, width, height, fps, timescale, quality) {
+            match Self::open("libx264", None, width, height, fps, timescale, rate) {
                 Ok(encoder) => return Ok(encoder),
                 Err(error) => failures.push(format!("libx264: {error:#}")),
             }
@@ -179,7 +198,7 @@ impl VideoEncoder {
         height: u32,
         fps: u32,
         timescale: u32,
-        quality: u8,
+        rate: Rate,
     ) -> Result<Self> {
         let cname = CString::new(name)?;
         // SAFETY: a lookup by name.
@@ -209,14 +228,19 @@ impl VideoEncoder {
                 node,
                 fps,
                 timescale,
-                quality,
+                rate,
             },
             scaler: ptr::null_mut(),
             nv12: Vec::new(),
             sent: false,
         };
         // Constant QP on Isocast's 1–100 scale: 70 (high) is QP 22.
-        let qp = (40.0 - f64::from(quality.clamp(1, 100)) * 0.25).round() as i64;
+        let qp = match rate {
+            Rate::Quality(quality) => {
+                (40.0 - f64::from(quality.clamp(1, 100)) * 0.25).round() as i64
+            }
+            Rate::Bitrate { .. } => 0,
+        };
         // SAFETY: configures the context before opening it.
         unsafe {
             let c = &mut *context;
@@ -230,9 +254,25 @@ impl VideoEncoder {
                 num: fps as c_int,
                 den: 1,
             };
-            c.gop_size = fps as c_int;
             c.max_b_frames = 0;
-            c.flags |= ffi::AV_CODEC_FLAG_GLOBAL_HEADER as c_int;
+            match rate {
+                Rate::Quality(_) => {
+                    c.gop_size = fps as c_int;
+                    c.flags |= ffi::AV_CODEC_FLAG_GLOBAL_HEADER as c_int;
+                }
+                Rate::Bitrate {
+                    kbps,
+                    constant,
+                    keyframe_interval,
+                    ..
+                } => {
+                    c.gop_size = keyframe_interval.max(1) as c_int;
+                    let bits = i64::from(kbps) * 1000;
+                    c.bit_rate = bits;
+                    c.rc_max_rate = if constant { bits } else { bits * 3 / 2 };
+                    c.rc_buffer_size = bits as c_int;
+                }
+            }
             c.color_primaries = ffi::AVColorPrimaries::AVCOL_PRI_BT709;
             c.color_trc = ffi::AVColorTransferCharacteristic::AVCOL_TRC_BT709;
             c.colorspace = ffi::AVColorSpace::AVCOL_SPC_BT709;
@@ -268,12 +308,42 @@ impl VideoEncoder {
                 check(ffi::av_hwframe_ctx_init(frames), "setting up VA-API frames")?;
                 c.pix_fmt = ffi::AVPixelFormat::AV_PIX_FMT_VAAPI;
                 c.hw_frames_ctx = ffi::av_buffer_ref(frames);
-                set("rc_mode", "CQP");
-                set("qp", &qp.to_string());
+                match rate {
+                    Rate::Quality(_) => {
+                        set("rc_mode", "CQP");
+                        set("qp", &qp.to_string());
+                    }
+                    Rate::Bitrate {
+                        constant,
+                        low_latency,
+                        ..
+                    } => {
+                        set("rc_mode", if constant { "CBR" } else { "VBR" });
+                        if low_latency {
+                            set("async_depth", "1");
+                        }
+                    }
+                }
             } else {
                 c.pix_fmt = ffi::AVPixelFormat::AV_PIX_FMT_NV12;
                 set("preset", "veryfast");
-                set("crf", &qp.to_string());
+                match rate {
+                    Rate::Quality(_) => {
+                        set("crf", &qp.to_string());
+                    }
+                    Rate::Bitrate {
+                        constant,
+                        low_latency,
+                        ..
+                    } => {
+                        if constant {
+                            set("nal-hrd", "cbr");
+                        }
+                        if low_latency {
+                            set("tune", "zerolatency");
+                        }
+                    }
+                }
             }
             check(
                 ffi::avcodec_open2(context, codec, ptr::null_mut()),
@@ -309,7 +379,7 @@ impl VideoEncoder {
             self.height,
             o.fps,
             o.timescale,
-            o.quality,
+            o.rate,
         )?;
         twin.send_black()?;
         twin.sent = true;
@@ -386,6 +456,7 @@ impl VideoEncoder {
             })
             .and_then(|_| {
                 (*hw).pts = (*sw).pts;
+                (*hw).pict_type = (*sw).pict_type;
                 check(
                     ffi::avcodec_send_frame(self.context, hw),
                     "sending a frame to the encoder",
@@ -400,6 +471,11 @@ impl VideoEncoder {
     /// to Y'CbCr on the CPU first (the engine records from Y'CbCr pools;
     /// BGRA comes from callers that don't).
     pub fn send(&mut self, frame: &Frame, pts: i64) -> Result<()> {
+        self.send_key(frame, pts, false)
+    }
+
+    /// [`VideoEncoder::send`], making it a keyframe when `key`.
+    pub fn send_key(&mut self, frame: &Frame, pts: i64, key: bool) -> Result<()> {
         if (frame.width(), frame.height()) != (self.width, self.height) {
             bail!(
                 "a {}x{} frame for a {}x{} encoder",
@@ -442,6 +518,9 @@ impl VideoEncoder {
                 s.linesize[index] = pitches[index] as c_int;
             }
             s.pts = pts;
+            if key {
+                s.pict_type = ffi::AVPictureType::AV_PICTURE_TYPE_I;
+            }
             s.color_range = ffi::AVColorRange::AVCOL_RANGE_MPEG;
             s.colorspace = ffi::AVColorSpace::AVCOL_SPC_BT709;
             let result = self.send_frame(sw);
@@ -585,7 +664,8 @@ unsafe impl Send for AudioEncoder {}
 const AAC_FRAME: usize = 1024;
 
 impl AudioEncoder {
-    pub fn new(channels: u32) -> Result<Self> {
+    /// `bitrate_kbps`: by default 128 (mono) or 192 (stereo).
+    pub fn new(channels: u32, bitrate_kbps: Option<u32>) -> Result<Self> {
         quiet();
         let name = CString::new("aac")?;
         // SAFETY: a lookup by name.
@@ -613,7 +693,11 @@ impl AudioEncoder {
             c.sample_fmt = ffi::AVSampleFormat::AV_SAMPLE_FMT_FLTP;
             c.sample_rate = 48_000;
             ffi::av_channel_layout_default(&mut c.ch_layout, channels as c_int);
-            c.bit_rate = if channels == 1 { 128_000 } else { 192_000 };
+            c.bit_rate = match bitrate_kbps {
+                Some(kbps) => i64::from(kbps) * 1000,
+                None if channels == 1 => 128_000,
+                None => 192_000,
+            };
             c.time_base = ffi::AVRational {
                 num: 1,
                 den: 48_000,

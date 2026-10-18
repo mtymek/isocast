@@ -109,7 +109,7 @@ impl Writer {
             height,
             fps,
             timescale,
-            encoder.quality.value(),
+            encode::Rate::Quality(encoder.quality.value()),
         )?;
         let sets = video.parameter_sets()?;
         let nals: Vec<&[u8]> = sets.iter().map(Vec::as_slice).collect();
@@ -123,7 +123,7 @@ impl Writer {
             .iter()
             .map(|track| {
                 Ok(Audio {
-                    encoder: AudioEncoder::new(track.channels)?,
+                    encoder: AudioEncoder::new(track.channels, None)?,
                     channels: track.channels as usize,
                     written: 0,
                 })

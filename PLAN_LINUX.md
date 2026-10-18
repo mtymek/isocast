@@ -187,9 +187,14 @@ upstream don't conflict in the 8 000-line notes file.
     descriptions, the JSON Schema's descriptions and the app's `.slint`
     copy; best done with upstream's Windows wording pass (W.6), since the
     same text serves every platform.
-- [ ] **L.7 Media, streaming, virtual camera.** libav media reader for
-  media sources and the editor, streaming through the existing path,
-  PipeWire virtual camera.
+- [ ] **L.7 Media, streaming, virtual camera.**
+  - [x] **L.7a Live encoders and streaming.** H.264 at a bitrate (CBR or
+    average, keyframe interval, low latency) and AAC for streams and the
+    H.264 monitors.
+  - [ ] **L.7b Media reader.** libav decoding for media sources, stingers
+    and the editor (`open_media`).
+  - [ ] **L.7c Virtual camera.** A PipeWire video source node (or
+    v4l2loopback) other apps can open as a camera.
 - [ ] **L.8 Packaging.** Flatpak and an AUR package; install, upgrade and
   uninstall verified locally. Publishing waits for the fork owner.
 - [ ] **L.9 e2e, stress and alpha.** Port the synthetic e2e and stress
@@ -409,3 +414,11 @@ upstream don't conflict in the 8 000-line notes file.
   and projectors use) share frames on Linux: `isocast frames small` and
   `scene:main` with `--shared --check` each received 95 frames through
   `dmabuf-socket`, all read back drawn.
+- L.7a (2026-10-18): live encoders: libavcodec H.264 with bitrate rate
+  control (VA-API CBR/VBR, libx264 nal-hrd CBR, zerolatency/async_depth 1
+  for monitors), parameter sets in-band and split out on keyframes, and
+  AAC at the stream's bitrate. Verified: `isocast frames program` saved
+  149 frames of 1920×1080 High-profile H.264 that decode cleanly; a stream
+  to a local RTMP listener (`ffmpeg -listen 1`) delivered 347 H.264 frames
+  and 272 AAC frames (5.8 s at 60 fps), 0 dropped, 0 reconnects; the test
+  key was removed from the keyring after.
