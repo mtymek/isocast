@@ -166,6 +166,28 @@ upstream don't conflict in the 8 000-line notes file.
     kept per target, up to 3 minutes for the first dialog.
   - [ ] **L.4d2 DMA-BUF screen frames.** Import the portal's DMA-BUFs into
     Vulkan instead of copying shared memory (4K60 copies cost CPU).
+  - [ ] **L.4d3 Choose windows in the desktop's dialog.** The app's
+    Window capture form lists apps from `devices.windows`, which is empty
+    on Linux, so it shows "no app with windows found". Steps:
+    - `devices` reports `window_picker: "portal"` on Linux; macOS keeps
+      its list.
+    - A `screen_pick { kind: "window" | "display" }` method (CLI
+      `isocast screen pick --window`, MCP) opens a portal session, shows
+      the dialog, keeps the restore token, returns one preview frame and
+      the size, and closes the session. Cancelling returns an error
+      saying nothing was chosen.
+    - The form shows "Choose window…" in place of the empty app list and
+      creates the source with the pick (named "Window N"); a
+      "Change window…" action re-picks for an existing source.
+    - Restore tokens are kept per source id instead of
+      `window:{app}:{title}` (two windows of one app overwrite each
+      other's token today); `app` and `title` become optional labels.
+    - A token that no longer restores (window closed, desktop restarted)
+      shows the dialog again, and the source's status says it is waiting
+      for a window to be chosen instead of showing a black frame.
+    - Done when: adding a window source in the app opens the dialog,
+      records the chosen window, and a restart reuses it without the
+      dialog (on Hyprland with "Allow a restore token" ticked).
   - [x] **L.4e Hotplug and reconnects.**
 - [x] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
