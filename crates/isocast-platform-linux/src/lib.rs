@@ -15,6 +15,8 @@ mod gpu;
 #[cfg(target_os = "linux")]
 mod jpeg;
 #[cfg(target_os = "linux")]
+mod media;
+#[cfg(target_os = "linux")]
 pub mod plugin;
 #[cfg(target_os = "linux")]
 mod system;
@@ -122,7 +124,7 @@ mod platform {
         }
 
         fn media_info(&self, path: &Path) -> Result<MediaInfo> {
-            STUB.media_info(path)
+            crate::media::media_info(path)
         }
 
         fn open_media(&self, path: &Path, _part: MediaPart) -> Result<Unsupported> {
@@ -230,10 +232,10 @@ mod platform {
 
         fn recover_file(
             &self,
-            _folder: &Path,
-            _name: &std::ffi::OsStr,
+            folder: &Path,
+            name: &std::ffi::OsStr,
         ) -> Result<Option<isocast_engine::RecoveredFile>> {
-            Err(unsupported("recovering recordings"))
+            crate::writer::recover(folder, name)
         }
 
         fn capture_screen(

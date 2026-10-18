@@ -33,7 +33,7 @@ fn quiet() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
         // SAFETY: sets a global level.
-        unsafe { ffi::av_log_set_level(ffi::AV_LOG_ERROR) };
+        unsafe { ffi::av_log_set_level(ffi::AV_LOG_FATAL) };
     });
 }
 
@@ -116,6 +116,12 @@ pub struct VideoEncoder {
     height: u32,
     /// How it was opened, to open a twin (`parameter_sets`).
     opened: Opened,
+    /// BGRA to NV12 conversion, made on first use.
+    scaler: *mut ffi::SwsContext,
+    nv12: Vec<u8>,
+    /// Whether any picture went in: draining a VA-API encoder that never
+    /// got one crashes inside libavcodec 63.
+    sent: bool,
 }
 
 #[derive(Clone)]
@@ -205,6 +211,9 @@ impl VideoEncoder {
                 timescale,
                 quality,
             },
+            scaler: ptr::null_mut(),
+            nv12: Vec::new(),
+            sent: false,
         };
         // Constant QP on Isocast's 1–100 scale: 70 (high) is QP 22.
         let qp = (40.0 - f64::from(quality.clamp(1, 100)) * 0.25).round() as i64;
@@ -303,6 +312,7 @@ impl VideoEncoder {
             o.quality,
         )?;
         twin.send_black()?;
+        twin.sent = true;
         twin.flush()?;
         let mut sets = Vec::new();
         while let Some(packet) = twin.receive()? {
@@ -386,11 +396,10 @@ impl VideoEncoder {
         }
     }
 
-    /// Encode `frame` at `pts` (encoder ticks).
+    /// Encode `frame` at `pts` (encoder ticks). BGRA frames are converted
+    /// to Y'CbCr on the CPU first (the engine records from Y'CbCr pools;
+    /// BGRA comes from callers that don't).
     pub fn send(&mut self, frame: &Frame, pts: i64) -> Result<()> {
-        if frame.kind() != Kind::YCbCr {
-            bail!("the Linux encoders take Y'CbCr frames, not BGRA");
-        }
         if (frame.width(), frame.height()) != (self.width, self.height) {
             bail!(
                 "a {}x{} frame for a {}x{} encoder",
@@ -400,10 +409,27 @@ impl VideoEncoder {
                 self.height
             );
         }
-        let layout = frame.layout();
-        // SAFETY: the frame wraps `frame`'s planes without owning them (no
-        // buffer, so libavcodec copies what it keeps); `frame` outlives the
-        // calls below. Both AVFrames are freed on every path.
+        let (planes, pitches): ([*const u8; 2], [usize; 2]) = match frame.kind() {
+            Kind::YCbCr => {
+                let layout = frame.layout();
+                (
+                    [frame.plane(0).as_ptr(), frame.plane(1).as_ptr()],
+                    [layout.planes[0].row_pitch, layout.planes[1].row_pitch],
+                )
+            }
+            Kind::Bgra => {
+                self.convert_to_nv12(frame)?;
+                let width = self.width as usize;
+                let luma = width * self.height as usize;
+                (
+                    [self.nv12.as_ptr(), self.nv12[luma..].as_ptr()],
+                    [width, width],
+                )
+            }
+        };
+        // SAFETY: the frame wraps the planes without owning them (no
+        // buffer, so libavcodec copies what it keeps); they outlive the
+        // calls below. The AVFrame is freed on every path.
         unsafe {
             let mut sw = ffi::av_frame_alloc();
             let s = &mut *sw;
@@ -411,20 +437,84 @@ impl VideoEncoder {
             s.width = self.width as c_int;
             s.height = self.height as c_int;
             for index in 0..2 {
-                s.data[index] = frame.plane(index).as_ptr().cast_mut();
-                s.linesize[index] = layout.planes[index].row_pitch as c_int;
+                s.data[index] = planes[index].cast_mut();
+                s.linesize[index] = pitches[index] as c_int;
             }
             s.pts = pts;
             s.color_range = ffi::AVColorRange::AVCOL_RANGE_MPEG;
             s.colorspace = ffi::AVColorSpace::AVCOL_SPC_BT709;
             let result = self.send_frame(sw);
             ffi::av_frame_free(&mut sw);
+            self.sent |= result.is_ok();
             result
         }
     }
 
+    /// Convert a BGRA frame into `self.nv12` (packed rows), Rec. 709 video
+    /// range.
+    fn convert_to_nv12(&mut self, frame: &Frame) -> Result<()> {
+        let (width, height) = (self.width as c_int, self.height as c_int);
+        // SAFETY: the context is made once for this size and freed in Drop;
+        // source and destination cover `height` rows at their pitches.
+        unsafe {
+            if self.scaler.is_null() {
+                // SWS_BILINEAR: an enum in FFmpeg 7.1+, a macro before.
+                const BILINEAR: c_int = 2;
+                self.scaler = ffi::sws_getContext(
+                    width,
+                    height,
+                    ffi::AVPixelFormat::AV_PIX_FMT_BGRA,
+                    width,
+                    height,
+                    ffi::AVPixelFormat::AV_PIX_FMT_NV12,
+                    BILINEAR,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null(),
+                );
+                if self.scaler.is_null() {
+                    bail!("couldn't set up BGRA to Y'CbCr conversion");
+                }
+                let table = ffi::sws_getCoefficients(ffi::SWS_CS_ITU709);
+                ffi::sws_setColorspaceDetails(self.scaler, table, 1, table, 0, 0, 1 << 16, 1 << 16);
+                self.nv12 = vec![0; self.width as usize * self.height as usize * 3 / 2];
+            }
+            let luma = self.width as usize * self.height as usize;
+            let source = [
+                frame.plane(0).as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+            ];
+            let source_pitch = [frame.layout().planes[0].row_pitch as c_int, 0, 0, 0];
+            let dest = [
+                self.nv12.as_mut_ptr(),
+                self.nv12.as_mut_ptr().add(luma),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            ];
+            let dest_pitch = [width, width, 0, 0];
+            let rows = ffi::sws_scale(
+                self.scaler,
+                source.as_ptr(),
+                source_pitch.as_ptr(),
+                0,
+                height,
+                dest.as_ptr(),
+                dest_pitch.as_ptr(),
+            );
+            if rows != height {
+                bail!("BGRA to Y'CbCr conversion gave {rows} of {height} rows");
+            }
+        }
+        Ok(())
+    }
+
     /// No more frames: the encoder gives out what it holds.
     pub fn flush(&mut self) -> Result<()> {
+        if !self.sent {
+            return Ok(());
+        }
         // SAFETY: a null frame starts draining.
         let code = unsafe { ffi::avcodec_send_frame(self.context, ptr::null()) };
         if code < 0 && code != ffi::AVERROR_EOF {
@@ -463,6 +553,7 @@ impl Drop for VideoEncoder {
             ffi::avcodec_free_context(&mut self.context);
             ffi::av_buffer_unref(&mut self.hw_frames);
             ffi::av_packet_free(&mut self.packet);
+            ffi::sws_freeContext(self.scaler);
         }
     }
 }

@@ -28,6 +28,9 @@ const AUDIO_SLACK: u64 = 480;
 
 const SAMPLE_RATE: i128 = 48_000;
 
+/// Encoder ticks per frame: the timescale is `fps × FRAME_TICKS`.
+const FRAME_TICKS: u32 = 1000;
+
 /// Pictures waiting for the video encoder before new ones are dropped.
 const QUEUE: usize = 4;
 
@@ -99,7 +102,7 @@ impl Writer {
             bail!("encoder.bit_depth: Linux records 8-bit video only so far");
         }
         let (width, height, fps) = (spec.video.width, spec.video.height, spec.video.fps.max(1));
-        let timescale = fps * 1000;
+        let timescale = fps * FRAME_TICKS;
         let video = VideoEncoder::new(
             codec,
             width,
@@ -142,7 +145,7 @@ impl Writer {
                 width: u16::try_from(width).context("video width")?,
                 height: u16::try_from(height).context("video height")?,
                 timescale,
-                frame_duration: 1000,
+                frame_duration: FRAME_TICKS,
                 decoder_config,
             },
             &audio_configs,
@@ -259,11 +262,14 @@ impl FileWriter for Writer {
     fn append_video(&mut self, frame: &Frame, pts: Time) -> Result<bool> {
         self.shared.check()?;
         let nanos = self.since_start(pts)?;
-        let tick = (nanos * i128::from(self.timescale) / 1_000_000_000) as i64;
-        // Pictures need strictly increasing times; one that rounds onto the
-        // previous one moves a tick later.
+        // Pictures sit on the frame grid (nearest slot; editors and the
+        // contracts expect whole frames), strictly increasing: one that
+        // lands on the previous picture's slot takes the next.
+        let fps = i128::from(self.timescale / FRAME_TICKS);
+        let slot = ((nanos * fps + 500_000_000).div_euclid(1_000_000_000)) as i64;
+        let tick = slot * i64::from(FRAME_TICKS);
         let tick = match self.last_tick {
-            Some(last) if tick <= last => last + 1,
+            Some(last) if tick <= last => last + i64::from(FRAME_TICKS),
             None if tick < 0 => 0,
             _ => tick,
         };
@@ -361,4 +367,28 @@ impl FileWriter for Writer {
     fn committed(&self) -> Option<Duration> {
         self.shared.mux.lock().ok()?.as_ref()?.progress().committed
     }
+}
+
+/// Finish `name` in `folder` from the fragments a killed recording left.
+/// `None`: not a file this writer makes, or already finished. The engine
+/// holds the folder's lock for the whole recovery pass.
+pub fn recover(
+    folder: &std::path::Path,
+    name: &std::ffi::OsStr,
+) -> Result<Option<isocast_engine::RecoveredFile>> {
+    let directory = isocast_mux::file::Directory::for_repair_under_caller_lock(folder)?;
+    let mut file = directory.open_for_repair(name)?;
+    let Some(saved) = isocast_mux::mp4::recover(&mut file)? else {
+        return Ok(None);
+    };
+    Ok(Some(isocast_engine::RecoveredFile {
+        fragments: if saved.rebuilt { saved.fragments } else { 0 },
+        frames: saved.rebuilt.then(|| saved.pictures()).flatten(),
+        seconds: saved.rebuilt.then(|| saved.shortest()).flatten(),
+        summary: if saved.rebuilt {
+            saved.summary()
+        } else {
+            String::new()
+        },
+    }))
 }

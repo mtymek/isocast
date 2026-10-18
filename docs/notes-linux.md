@@ -115,3 +115,12 @@ in `PLAN_LINUX.md`.
   drops about half the frames. `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/intel_icd.json`
   makes wgpu use the Intel iGPU instead, which records with 0 drops.
 - `isocast debug on` refuses until a live setup exists; apply one first.
+- `avcodec_send_frame(NULL)` on a VA-API encoder that never received a
+  picture segfaults in libavcodec 63 (FFmpeg 9.0.2). `VideoEncoder::flush`
+  skips draining when nothing was sent.
+- The media contracts need stored picture times on the exact 1/fps grid;
+  the writer snaps each picture to its nearest frame slot.
+- Run the native contracts with
+  `python3 scripts/platform-contracts.py --bin target/release/isocast-platform-contracts --work <new dir> --backend native --suite media --hardware`.
+- `pgrep -f`/`pkill -f` with a path in the pattern also matches the shell
+  running the command. Use `pgrep -x isocastd`.

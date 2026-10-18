@@ -52,7 +52,8 @@ pub struct Directory {
 #[derive(Debug)]
 struct DirectoryInner {
     directory: File,
-    _lock: File,
+    /// None when the caller holds the folder's lock itself.
+    _lock: Option<File>,
     repairing: bool,
     #[cfg(windows)]
     enumeration: Mutex<()>,
@@ -67,6 +68,24 @@ impl Directory {
     /// Exclusively try-lock the folder for a whole repair pass.
     pub fn for_repair(folder: &Path) -> Result<Self> {
         Self::open(folder, true)
+    }
+
+    /// A repair anchor for a caller that already holds the folder's
+    /// `.isocast.lock` exclusively (the engine's Unix recovery pass, which
+    /// keeps it for the whole pass): a second lock on another descriptor
+    /// would refuse, so none is taken. Children are still opened through
+    /// the pinned folder, never following links.
+    #[cfg(unix)]
+    pub fn for_repair_under_caller_lock(folder: &Path) -> Result<Self> {
+        let directory = platform::open_directory(folder)
+            .with_context(|| format!("could not open recording folder {}", folder.display()))?;
+        Ok(Self {
+            inner: Arc::new(DirectoryInner {
+                directory,
+                _lock: None,
+                repairing: true,
+            }),
+        })
     }
 
     fn open(folder: &Path, repairing: bool) -> Result<Self> {
@@ -86,7 +105,7 @@ impl Directory {
         Ok(Self {
             inner: Arc::new(DirectoryInner {
                 directory,
-                _lock: lock,
+                _lock: Some(lock),
                 repairing,
                 #[cfg(windows)]
                 enumeration: Mutex::new(()),

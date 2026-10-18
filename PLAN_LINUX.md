@@ -113,7 +113,7 @@ upstream don't conflict in the 8 000-line notes file.
     fallback for H.264) and AAC into `isocast-mux`, video on a thread per
     file. A synthetic program and ISOs record complete, decodable, aligned
     files when compositing keeps up (see L.2e).
-  - [ ] **L.2d Recovery and contracts.** `recover_file` through the mux's
+  - [x] **L.2d Recovery and contracts.** `recover_file` through the mux's
     repair on Linux (its recovery module is Windows-only today), launch
     recovery of killed takes, and the `normal`, `pressure`, `commit`,
     `ownership` and `recover` contracts.
@@ -222,3 +222,17 @@ upstream don't conflict in the 8 000-line notes file.
   clean, beep onset 0.700021 s against flash 0.700 s. Compositing on the
   RX 5700 XT drops about half (L.2e). `doctor` lists `H.264 (VA-API,
   /dev/dri/renderD129), HEVC (VA-API, /dev/dri/renderD129)`.
+- L.2d (2026-10-18): killed takes are finished at the next launch.
+  `recover_file` repairs through `isocast-mux`'s `mp4::recover` using a new
+  `Directory::for_repair_under_caller_lock` (the engine already holds the
+  folder's lock exclusively for the pass). `media_info` reads files with
+  libavformat. The encoder converts BGRA frames to NV12 with libswscale,
+  skips draining an encoder that never got a picture (that crashed in
+  libavcodec 63), and pictures sit on the frame grid. Verified: a take
+  killed with `kill -9` after 4 s came back at the next launch with all
+  three files finished from 8 fragments (209/209/104 pictures, 3.48 s),
+  full decode clean, manifest `interrupted` with probed durations;
+  `scripts/platform-contracts.py --backend native --suite media --hardware`
+  passes clock, pools, gpu, normal, pressure, ownership and recovery on the
+  RX 5700 XT; a 6 s synthetic take stored exactly 360/360/180 frames,
+  6.000000 s, 0 dropped.

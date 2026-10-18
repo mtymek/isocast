@@ -12,7 +12,7 @@ anyhow = "1.0.104"
 ash = { version = "0.38", default-features = false }
 # libavcodec for H.264/HEVC (VA-API, then software) and AAC, linked
 # dynamically against the system's FFmpeg 4 to 9.
-ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "format"] }
+ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "format", "software-scaling"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 isocast-diagnostics = { path = "../isocast-diagnostics" }
 isocast-engine = { path = "../isocast-engine" }
