@@ -3237,7 +3237,7 @@ dependencies = [
 
 [[package]]
 name = "isocast-platform-linux"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "isocast-diagnostics",
  "libc",

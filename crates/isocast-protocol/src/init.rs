@@ -95,9 +95,13 @@ pub struct Initialized {
     pub applied: Option<crate::api::Applied>,
 }
 
-/// Recording folder when none is given.
-pub const DEFAULT_FOLDER: &str =
-    crate::platform_text::select("~/Movies/Isocast", "~/Videos/Isocast");
+/// Recording folder when none is given: in Movies on macOS, Videos on
+/// Windows and Linux.
+pub const DEFAULT_FOLDER: &str = if cfg!(target_os = "linux") {
+    "~/Videos/Isocast"
+} else {
+    crate::platform_text::select("~/Movies/Isocast", "~/Videos/Isocast")
+};
 
 /// Conservative starting cadence for a new setup/profile, never an edit to
 /// an existing one. Memory and CPU counts are portable; they don't pretend

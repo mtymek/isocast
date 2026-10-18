@@ -493,10 +493,10 @@ fn recording_settings(
     let folder = match profile.and_then(|p| p.folder.as_deref()) {
         Some(folder) => home_relative(folder, home),
         None => {
-            findings
-                .notes
-                .push("no OBS profile gave the recordings folder; using ~/Movies".into());
-            "~/Movies".into()
+            findings.notes.push(format!(
+                "no OBS profile gave the recordings folder; using {FALLBACK_FOLDER}"
+            ));
+            FALLBACK_FOLDER.into()
         }
     };
     let container = match profile.and_then(|p| p.container.as_deref()) {
@@ -1009,6 +1009,13 @@ pub struct Options<'a> {
 /// Look for OBS's settings in this folder instead of the home folder's
 /// (isolated engines and tests, so they never read the user's OBS).
 pub const FOLDER_ENV: &str = "ISOCAST_OBS_FOLDER";
+
+/// Recordings folder for an OBS import whose profile names none.
+const FALLBACK_FOLDER: &str = if cfg!(target_os = "linux") {
+    "~/Videos"
+} else {
+    "~/Movies"
+};
 
 /// Where OBS keeps its settings on this machine: `$ISOCAST_OBS_FOLDER` if set.
 pub fn obs_folder(home: &Path) -> PathBuf {
