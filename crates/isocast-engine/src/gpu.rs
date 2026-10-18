@@ -66,12 +66,23 @@ impl Gpu {
         });
         #[cfg(windows)]
         let adapter = isocast_surfaces::dx12_adapter(&instance, None)?;
+        // Linux frames are CPU memory the GPU reads and draws into
+        // directly. An integrated GPU shares that memory; a discrete one
+        // reaches it over PCIe, too slowly for a program and its ISOs, so
+        // prefer integrated there until frames can live in GPU memory.
+        #[cfg(not(windows))]
+        let power_preference = if cfg!(target_os = "linux") {
+            wgpu::PowerPreference::LowPower
+        } else {
+            wgpu::PowerPreference::HighPerformance
+        };
         #[cfg(not(windows))]
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            power_preference,
             ..Default::default()
         }))
         .context("no GPU found")?;
+        isocast_diagnostics::diagnostic!("info"; "GPU: {}", adapter.get_info().name);
         // 10-bit frames arrive as 16-bit planes; native Windows cameras use
         // genuine NV12 allocations with two aspect views of one texture.
         let required_features = adapter.features()

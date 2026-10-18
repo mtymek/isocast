@@ -120,10 +120,16 @@ upstream don't conflict in the 8 000-line notes file.
   - [ ] **L.2e Discrete GPU frames.** On the RX 5700 XT the compositor
     drawing into and sampling CPU-memory frames over PCIe holds the GPU at
     99% busy and drops about half the frames of a 1080p60 program plus
-    ISOs. Keep render targets in device-local memory on discrete GPUs
-    (DMA-BUF frames VA-API imports directly), or composite on an
-    integrated GPU when there is one. Done when the synthetic setup records
-    with 0 dropped frames on the discrete GPU.
+    ISOs.
+    - [x] **L.2e1 Prefer the integrated GPU.** On Linux the engine asks
+      wgpu for the low-power adapter, so machines with an iGPU composite
+      where CPU memory is local.
+    - [ ] **L.2e2 GPU-memory frames.** Render targets in device-local
+      memory exported as DMA-BUF, imported by VA-API without copies; CPU
+      access (JPEG monitors, software encoding) through explicit readback.
+      Done when the synthetic setup records with 0 dropped frames on a
+      machine with only a discrete GPU (here: force the RX 5700 XT with
+      `VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json`).
 - [ ] **L.3 Encoders.** libavcodec VA-API and NVENC, LGPL software last;
   DMA-BUF input where the driver allows; program priority and ISO shedding
   within detected session limits; clear errors for unsupported codecs.
@@ -236,3 +242,7 @@ upstream don't conflict in the 8 000-line notes file.
   passes clock, pools, gpu, normal, pressure, ownership and recovery on the
   RX 5700 XT; a 6 s synthetic take stored exactly 360/360/180 frames,
   6.000000 s, 0 dropped.
+- L.2e1 (2026-10-18): the Linux engine prefers the low-power (integrated)
+  adapter. Verified: with no override the daemon logged `GPU: Intel(R)
+  Graphics (ARL)` and a 10 s synthetic take recorded 0 dropped frames,
+  encoding on the RX 5700 XT's VA-API.
