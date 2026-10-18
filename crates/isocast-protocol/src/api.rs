@@ -2369,7 +2369,9 @@ pub struct SharedFramesParams {
 pub struct SharedFrameStream {
     pub target: String,
     /// How surfaces are handed over: `iosurface-mach` (macOS: IOSurfaces
-    /// as Mach send rights from the Mach service `service`).
+    /// as Mach send rights from the Mach service `service`) or
+    /// `dmabuf-socket` (Linux: DMA-BUF descriptors over the Unix socket at
+    /// `service`).
     pub transport: String,
     /// Where the client fetches each ring's surfaces: on macOS the daemon's
     /// Mach service name in the client's bootstrap namespace.

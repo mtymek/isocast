@@ -289,11 +289,11 @@ mod platform {
 
         fn shared_surface(
             &self,
-            _gpu: &Gpu,
-            _width: u32,
-            _height: u32,
+            gpu: &Gpu,
+            width: u32,
+            height: u32,
         ) -> Result<(isocast_surfaces::Surface, wgpu::Texture)> {
-            Err(unsupported("shared GPU surfaces"))
+            crate::gpu::shared_surface(gpu, width, height)
         }
 
         fn encode_jpeg(

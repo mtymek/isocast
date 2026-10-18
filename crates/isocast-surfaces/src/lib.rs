@@ -15,7 +15,9 @@
 //! authenticated named pipes. The client checks the adapter and acknowledges
 //! a frame only after its rendering queue's fence completes.
 //!
-//! On other systems everything here returns an error saying so.
+//! On Linux a surface is a DMA-BUF, handed over with `SCM_RIGHTS` on a
+//! socket of the daemon's own (`linux.rs`). On other systems everything
+//! here returns an error saying so.
 
 use std::fmt;
 
@@ -34,17 +36,26 @@ pub use windows::{check_render_queue, dx12_adapter, dx12_adapter_luid};
 #[cfg(all(windows, feature = "wgpu"))]
 pub use windows::{retire, retirement_failed};
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::{Exporter, Surface, fetch, host_now};
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 mod other;
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub use other::{Exporter, Surface, fetch, host_now};
 
+/// How this system hands surfaces over, as `shared_frames` names it.
 #[cfg(target_os = "macos")]
 pub const TRANSPORT: &str = "iosurface-mach";
 #[cfg(windows)]
 pub const TRANSPORT: &str = "d3d12-named-pipe";
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+pub const TRANSPORT: &str = "dmabuf-socket";
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub const TRANSPORT: &str = "unsupported";
 
 /// The most surfaces a ring may have.

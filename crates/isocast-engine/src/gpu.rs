@@ -85,8 +85,14 @@ impl Gpu {
         isocast_diagnostics::diagnostic!("info"; "GPU: {}", adapter.get_info().name);
         // 10-bit frames arrive as 16-bit planes; native Windows cameras use
         // genuine NV12 allocations with two aspect views of one texture.
-        let required_features = adapter.features()
-            & (wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12);
+        let base = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12;
+        let wanted = if cfg!(target_os = "linux") {
+            // Shared surfaces are DMA-BUFs: clients import them.
+            base | wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF
+        } else {
+            base
+        };
+        let required_features = adapter.features() & wanted;
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("isocast"),
             required_features,

@@ -113,6 +113,11 @@ in `PLAN_LINUX.md`.
   name and window app can't be matched, so each target key keeps its own
   restore token.
 
+- 2026-10-18: Linux shared surfaces are linear RGBA DMA-BUFs (modifier
+  LINEAR), so a client on another GPU of the machine can import them too.
+  The hand-over socket lives in `$XDG_RUNTIME_DIR` (0700, the user's) and
+  checks `SO_PEERCRED`.
+
 ## Gotchas
 
 - `isocast doctor` on the stub reports `x86_64 (unknown chip) · 0 GB`:

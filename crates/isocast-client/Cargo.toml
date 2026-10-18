@@ -27,6 +27,9 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["std", "park
 libc = "0.2"
 wgpu = { version = "=30.0.1", default-features = false, features = ["metal"], optional = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"], optional = true }
+
 [target.'cfg(windows)'.dependencies]
 wgpu = { version = "=30.0.1", default-features = false, features = ["dx12"], optional = true }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_System_Threading"] }

@@ -654,3 +654,175 @@ impl FrameImporter for Importer {
         Ok(Some((planes.remove(0), chroma)))
     }
 }
+
+/// A `width`×`height` RGBA picture other processes can show: a linear
+/// Vulkan image in GPU memory exported as a DMA-BUF, and the texture the
+/// engine draws into it through.
+pub(crate) fn shared_surface(
+    gpu: &Gpu,
+    width: u32,
+    height: u32,
+) -> Result<(isocast_surfaces::Surface, wgpu::Texture)> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: only reads the device's handles, which live as long as it.
+    let (raw, instance, physical, enabled) = unsafe {
+        let device = gpu
+            .device
+            .as_hal::<hal::api::Vulkan>()
+            .context("shared surfaces need a Vulkan device")?;
+        (
+            device.raw_device().clone(),
+            device.shared_instance().raw_instance().clone(),
+            device.raw_physical_device(),
+            device.enabled_device_extensions().to_vec(),
+        )
+    };
+    for extension in [
+        ash::khr::external_memory_fd::NAME,
+        ash::ext::external_memory_dma_buf::NAME,
+    ] {
+        if !enabled.contains(&extension) {
+            bail!("the GPU can't export shared surfaces (no {extension:?})");
+        }
+    }
+    let handle = vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT;
+    let mut external = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle);
+    let info = vk::ImageCreateInfo::default()
+        .image_type(vk::ImageType::TYPE_2D)
+        .format(vk::Format::R8G8B8A8_UNORM)
+        .extent(vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        })
+        .mip_levels(1)
+        .array_layers(1)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .tiling(vk::ImageTiling::LINEAR)
+        .usage(
+            vk::ImageUsageFlags::COLOR_ATTACHMENT
+                | vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::TRANSFER_DST,
+        )
+        .sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .push_next(&mut external);
+    // SAFETY: a valid create info on a live device; the image and memory
+    // are destroyed on every failure below, and by the texture's drop
+    // callback after.
+    unsafe {
+        let image = raw
+            .create_image(&info, None)
+            .context("couldn't make a shared surface image")?;
+        let requirements = raw.get_image_memory_requirements(image);
+        let layout = raw.get_image_subresource_layout(
+            image,
+            vk::ImageSubresource {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                array_layer: 0,
+            },
+        );
+        let properties = instance.get_physical_device_memory_properties(physical);
+        let Some(index) = (0..properties.memory_type_count).find(|&index| {
+            requirements.memory_type_bits & (1 << index) != 0
+                && properties.memory_types[index as usize]
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+        }) else {
+            raw.destroy_image(image, None);
+            bail!("no GPU memory type for a shared surface");
+        };
+        let mut export = vk::ExportMemoryAllocateInfo::default().handle_types(handle);
+        let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
+        let allocate = vk::MemoryAllocateInfo::default()
+            .allocation_size(requirements.size)
+            .memory_type_index(index)
+            .push_next(&mut export)
+            .push_next(&mut dedicated);
+        let memory = match raw.allocate_memory(&allocate, None) {
+            Ok(memory) => memory,
+            Err(error) => {
+                raw.destroy_image(image, None);
+                return Err(error).context("couldn't allocate a shared surface");
+            }
+        };
+        let cleanup = move |raw: &ash::Device| {
+            raw.destroy_image(image, None);
+            raw.free_memory(memory, None);
+        };
+        if let Err(error) = raw.bind_image_memory(image, memory, 0) {
+            cleanup(&raw);
+            return Err(error).context("couldn't bind a shared surface");
+        }
+        let fd_device = ash::khr::external_memory_fd::Device::new(&instance, &raw);
+        let fd = match fd_device.get_memory_fd(
+            &vk::MemoryGetFdInfoKHR::default()
+                .memory(memory)
+                .handle_type(handle),
+        ) {
+            Ok(fd) => std::os::fd::OwnedFd::from_raw_fd(fd),
+            Err(error) => {
+                cleanup(&raw);
+                return Err(error).context("couldn't export a shared surface");
+            }
+        };
+        let surface = isocast_surfaces::Surface::from_dmabuf(
+            fd,
+            width,
+            height,
+            layout.row_pitch as u32,
+            layout.offset as u32,
+            0, // DRM_FORMAT_MOD_LINEAR
+        );
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let destroy = raw.clone();
+        let drop_callback: hal::DropCallback = Box::new(move || cleanup(&destroy));
+        let hal_device = gpu
+            .device
+            .as_hal::<hal::api::Vulkan>()
+            .context("shared surfaces need a Vulkan device")?;
+        let hal_texture = hal_device.texture_from_raw(
+            image,
+            &hal::TextureDescriptor {
+                label: Some("shared surface"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUses::RESOURCE
+                    | wgpu::TextureUses::COLOR_TARGET
+                    | wgpu::TextureUses::COPY_SRC
+                    | wgpu::TextureUses::COPY_DST,
+                memory_flags: hal::MemoryFlags::empty(),
+                view_formats: Vec::new(),
+            },
+            Some(drop_callback),
+            hal::vulkan::TextureMemory::External,
+        );
+        drop(hal_device);
+        let texture = gpu.device.create_texture_from_hal::<hal::api::Vulkan>(
+            hal_texture,
+            &wgpu::TextureDescriptor {
+                label: Some("shared surface"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            },
+            wgpu::TextureUses::UNINITIALIZED,
+        );
+        Ok((surface, texture))
+    }
+}

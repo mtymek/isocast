@@ -39,8 +39,15 @@ impl Gpu {
             ..Default::default()
         }))
         .context("no GPU found")?;
+        // Linux shares the daemon's frames as DMA-BUFs this device imports.
+        let required_features = if cfg!(target_os = "linux") {
+            adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("isocast-ui"),
+            required_features,
             ..Default::default()
         }))
         .context("could not open the GPU")?;

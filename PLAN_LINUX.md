@@ -167,10 +167,18 @@ upstream don't conflict in the 8 000-line notes file.
 - [x] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
   stub or lavapipe run does not count.
-- [ ] **L.6 App and shared surfaces.** Slint on Wayland and X11, DMA-BUF
-  previews and monitors, GlobalShortcuts, Secret Service, Linux wording in
-  onboarding, settings, errors, shortcut labels, CLI help and MCP tool
-  descriptions (`~/Movies/Isocast`, "this Mac", Finder, Keychain).
+- [ ] **L.6 App and shared surfaces.**
+  - [x] **L.6a Shared surfaces.** DMA-BUF surfaces handed over with
+    `SCM_RIGHTS`; the app's preview and `isocast frames --shared` work.
+  - [ ] **L.6b Monitors and projectors.** Every place the app shows
+    frames (source monitors, projectors, multiview) checked on Linux.
+  - [ ] **L.6c Global shortcuts.** The portal's GlobalShortcuts for
+    hotkeys.
+  - [ ] **L.6d Secret Service.** Stream keys and other secrets in the
+    desktop's keyring over D-Bus.
+  - [ ] **L.6e Linux wording.** Onboarding, settings, errors, shortcut
+    labels, CLI help, doctor and MCP tool descriptions (`~/Movies/Isocast`,
+    "this Mac", "macOS asks", Finder, Keychain).
 - [ ] **L.7 Media, streaming, virtual camera.** libav media reader for
   media sources and the editor, streaming through the existing path,
   PipeWire virtual camera.
@@ -357,3 +365,14 @@ upstream don't conflict in the 8 000-line notes file.
   the Intel iGPU and again forced onto the RX 5700 XT. The capture case
   restored the kept ScreenCast token without a dialog: 6 frames, none
   after drop, presentation 1–3 ms before arrival.
+- L.6a (2026-10-18): shared surfaces on Linux. The daemon draws monitors
+  into linear RGBA Vulkan images exported as DMA-BUFs; a socket in
+  `$XDG_RUNTIME_DIR` (same user only) hands a ring's descriptors to the
+  client holding its token, once, with `SCM_RIGHTS`; clients import them
+  with wgpu-hal's `texture_from_dmabuf_fd` (devices ask for
+  `VULKAN_EXTERNAL_MEMORY_DMA_BUF`). Transport `dmabuf-socket`. Verified:
+  `isocast frames program --shared --check --seconds 5` received 154
+  frames through 4 shared 1920×1080 surfaces, all 154 read back drawn (0
+  black, 0 undrawn), 34.9 ms median after their time; `isocast-ui` shows
+  the live program preview at 60 fps (0.4% CPU), where before it said
+  shared frames were macOS only.

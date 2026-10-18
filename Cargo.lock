@@ -3464,6 +3464,7 @@ version = "0.0.8"
 dependencies = [
  "anyhow",
  "isocast-ipc",
+ "libc",
  "mach2",
  "objc2-core-foundation",
  "objc2-io-surface",
