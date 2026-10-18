@@ -18,12 +18,14 @@ env:
   CARGO_INCREMENTAL: 0
   # Debug info makes the build several times larger on disk.
   CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_BUILD_JOBS: 2
 
 jobs:
   workspace:
     name: workspace (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A cold build of the whole workspace takes over 40 minutes.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -36,6 +38,15 @@ jobs:
           df -h /
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
+
+      # rustc on the largest crates (app, daemon, CLI) starved the runner of
+      # memory until it lost contact; swap and two jobs keep it alive.
+      - name: Swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 10G /swapfile2 && sudo chmod 600 /swapfile2
+          sudo mkswap /swapfile2 && sudo swapon /swapfile2
+          free -h
 
       # isocastd links OpenSSL and FFmpeg (bindings generated with
       # libclang); isocast-ui links fontconfig and freetype. Mesa's lavapipe
@@ -59,6 +70,7 @@ jobs:
         with:
           key: linux-workspace
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
       - name: Format
         run: cargo fmt --all --check
