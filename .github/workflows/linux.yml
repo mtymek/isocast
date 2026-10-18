@@ -16,6 +16,10 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # The hosted runner has 16 GB; full debug info with every job in parallel
+  # ran out of memory linking the daemon, CLI and app (exit 143).
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_BUILD_JOBS: 2
 
 jobs:
   workspace:
