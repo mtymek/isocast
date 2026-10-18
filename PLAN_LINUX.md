@@ -174,7 +174,7 @@ upstream don't conflict in the 8 000-line notes file.
     frames (source monitors, projectors, multiview) checked on Linux.
   - [ ] **L.6c Global shortcuts.** The portal's GlobalShortcuts for
     hotkeys.
-  - [ ] **L.6d Secret Service.** Stream keys and other secrets in the
+  - [x] **L.6d Secret Service.** Stream keys and other secrets in the
     desktop's keyring over D-Bus.
   - [ ] **L.6e Linux wording.** Onboarding, settings, errors, shortcut
     labels, CLI help, doctor and MCP tool descriptions (`~/Movies/Isocast`,
@@ -376,3 +376,9 @@ upstream don't conflict in the 8 000-line notes file.
   black, 0 undrawn), 34.9 ms median after their time; `isocast-ui` shows
   the live program preview at 60 fps (0.4% CPU), where before it said
   shared frames were macOS only.
+- L.6d (2026-10-18): secrets live in the desktop keyring through the
+  Secret Service (`secret-service` crate, encrypted session), items
+  labelled `Isocast: <service> (<account>)` with attributes
+  `application=isocast`, `service`, `account`. Verified against GNOME
+  Keyring: `isocast stream key set --service twitch` stored a test key
+  `secret-tool` read back, and `stream key clear` removed it.

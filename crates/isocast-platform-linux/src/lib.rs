@@ -29,6 +29,8 @@ pub mod plugin;
 #[cfg(target_os = "linux")]
 mod screen;
 #[cfg(target_os = "linux")]
+mod secrets;
+#[cfg(target_os = "linux")]
 mod system;
 #[cfg(target_os = "linux")]
 mod unsupported;
@@ -430,19 +432,19 @@ mod platform {
         }
 
         fn has_secret(&self, service: &str, account: &str) -> Result<bool> {
-            STUB.has_secret(service, account)
+            crate::secrets::has_secret(service, account)
         }
 
         fn secret(&self, service: &str, account: &str) -> Result<Option<String>> {
-            STUB.secret(service, account)
+            crate::secrets::secret(service, account)
         }
 
         fn set_secret(&self, service: &str, account: &str, secret: &str) -> Result<()> {
-            STUB.set_secret(service, account, secret)
+            crate::secrets::set_secret(service, account, secret)
         }
 
         fn delete_secret(&self, service: &str, account: &str) -> Result<bool> {
-            STUB.delete_secret(service, account)
+            crate::secrets::delete_secret(service, account)
         }
     }
 }
