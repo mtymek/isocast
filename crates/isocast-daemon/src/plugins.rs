@@ -692,10 +692,7 @@ impl Registry {
             Check {
                 name: "plugins: sandbox".into(),
                 status: CheckStatus::Ok,
-                detail: format!(
-                    "{processes} plugin process(es) run sandboxed (sandbox-exec), without \
-                     isocastd's camera, microphone and screen grants"
-                ),
+                detail: format!("{processes} plugin process(es) {SANDBOXED}"),
                 fix: None,
             }
         } else {
@@ -703,9 +700,9 @@ impl Registry {
                 name: "plugins: sandbox".into(),
                 status: CheckStatus::Warning,
                 detail: format!(
-                    "sandbox-exec isn't on this Mac, so {processes} plugin process(es) run \
-                     unsandboxed: they can read your files and use the network (their calls to \
-                     isocastd are still limited to their grants)"
+                    "{NO_SANDBOX}, so {processes} plugin process(es) run unsandboxed: they can \
+                     read your files and use the network (their calls to isocastd are still \
+                     limited to their grants)"
                 ),
                 fix: Some(
                     "remove plugins you don't trust (`isocast plugin remove ID`)".to_string(),
@@ -885,8 +882,16 @@ impl Registry {
         }
         if manifest.process.is_some() && manifest.compatible() {
             if !sandbox_available() {
+                notes.push(format!("{NO_SANDBOX}, so its process runs unsandboxed"));
+            } else if cfg!(target_os = "linux")
+                && granted.recordings == Some(RecordingsAccess::Write)
+            {
+                // Landlock can't allow making new files without allowing
+                // changes to existing ones.
                 notes.push(
-                    "sandbox-exec isn't on this Mac, so its process runs unsandboxed".to_string(),
+                    "on Linux its sandbox can read the recordings folders but not create files \
+                     in them"
+                        .to_string(),
                 );
             }
             notes.push(format!(
@@ -1535,7 +1540,7 @@ impl Launch {
             &env,
             &self.folder,
             &log,
-            profile.as_deref(),
+            profile.as_ref(),
         )
         .map_err(|err| format!("{}: {err}", program.display()))?;
         if let Some((_, started)) = process_info(pid) {
@@ -1620,14 +1625,44 @@ impl Launch {
         .profile()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    /// Its Landlock sandbox: its own folders, granted files, its data
+    /// folder, its program and socket, and the recordings folders if granted.
+    #[cfg(target_os = "linux")]
+    fn profile(
+        &self,
+        program: &Path,
+        socket: &Path,
+        data: &Path,
+        recordings: &RecordingFolders,
+    ) -> Profile {
+        let home = isocast_protocol::api::home_folder();
+        let mut readable = vec![self.dir.clone(), self.folder.clone()];
+        readable.extend(
+            self.granted
+                .files
+                .iter()
+                .map(|file| isocast_platform_linux::plugin::expand_home(file, &home)),
+        );
+        isocast_platform_linux::plugin::Sandbox {
+            readable,
+            writable: vec![data.to_path_buf()],
+            programs: vec![program.to_path_buf()],
+            program_folders: vec![self.folder.clone()],
+            socket: socket.to_path_buf(),
+            network: !self.granted.network.is_empty(),
+            recordings: recordings.roots.clone(),
+            recordings_read: self.granted.recordings.is_some(),
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn profile(
         &self,
         _program: &Path,
         _socket: &Path,
         _data: &Path,
         _recordings: &RecordingFolders,
-    ) -> String {
+    ) -> Profile {
         String::new()
     }
 }
@@ -2073,10 +2108,32 @@ fn sandbox_available() -> bool {
     isocast_platform_macos::plugin::sandbox_available()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn sandbox_available() -> bool {
+    isocast_platform_linux::plugin::sandbox_available()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn sandbox_available() -> bool {
     false
 }
+
+#[cfg(target_os = "linux")]
+const SANDBOXED: &str = "run sandboxed (Landlock), without access to your home folder, \
+                         devices or desktop session (screen, audio, D-Bus)";
+#[cfg(target_os = "linux")]
+const NO_SANDBOX: &str = "this kernel has no Landlock ABI 10 (Linux 7.0) or has Landlock off";
+#[cfg(not(target_os = "linux"))]
+const SANDBOXED: &str =
+    "run sandboxed (sandbox-exec), without isocastd's camera, microphone and screen grants";
+#[cfg(not(target_os = "linux"))]
+const NO_SANDBOX: &str = "sandbox-exec isn't on this Mac";
+
+/// What `Plugin::profile` makes and `spawn` runs a process in.
+#[cfg(target_os = "linux")]
+type Profile = isocast_platform_linux::plugin::Sandbox;
+#[cfg(not(target_os = "linux"))]
+type Profile = String;
 
 #[cfg(target_os = "macos")]
 fn spawn(
@@ -2085,7 +2142,7 @@ fn spawn(
     env: &[(String, String)],
     cwd: &Path,
     log: &Path,
-    profile: Option<&str>,
+    profile: Option<&Profile>,
 ) -> io::Result<u32> {
     isocast_platform_macos::plugin::spawn(&isocast_platform_macos::plugin::Spawn {
         program,
@@ -2093,19 +2150,38 @@ fn spawn(
         env,
         cwd,
         log,
-        profile,
+        profile: profile.map(String::as_str),
     })
 }
 
-/// Other Unix systems: unsandboxed, in its own process group.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(target_os = "linux")]
 fn spawn(
     program: &Path,
     args: &[String],
     env: &[(String, String)],
     cwd: &Path,
     log: &Path,
-    _profile: Option<&str>,
+    sandbox: Option<&Profile>,
+) -> io::Result<u32> {
+    isocast_platform_linux::plugin::spawn(&isocast_platform_linux::plugin::Spawn {
+        program,
+        args,
+        env,
+        cwd,
+        log,
+        sandbox,
+    })
+}
+
+/// Other Unix systems: unsandboxed, in its own process group.
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
+fn spawn(
+    program: &Path,
+    args: &[String],
+    env: &[(String, String)],
+    cwd: &Path,
+    log: &Path,
+    _profile: Option<&Profile>,
 ) -> io::Result<u32> {
     use std::os::unix::process::CommandExt;
     let log = isocast_diagnostics::output::plugin_pipe(log)?;
@@ -2131,7 +2207,7 @@ fn spawn(
     _env: &[(String, String)],
     _cwd: &Path,
     _log: &Path,
-    _profile: Option<&str>,
+    _profile: Option<&Profile>,
 ) -> io::Result<u32> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
