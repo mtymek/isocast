@@ -154,7 +154,7 @@ upstream don't conflict in the 8 000-line notes file.
   - [ ] **L.4c2 Application audio and exclusions.** One app's audio (its
     PipeWire stream node), and system audio leaving out apps or Isocast's
     own playback.
-  - [ ] **L.4c3 Measured A/V offset.** A clap in front of a camera with its
+  - [x] **L.4c3 Measured A/V offset.** A clap in front of a camera with its
     microphone: offset between the clap frame and its sound.
   - [x] **L.4d Screens and windows.** xdg-desktop-portal ScreenCast +
     PipeWire (shared-memory BGRx/RGBx copied into frames), restore token
@@ -323,3 +323,10 @@ upstream don't conflict in the 8 000-line notes file.
   correct picture (the chosen 1730×2080 area, letterboxed in the
   program); a later take restored without the dialog (`start` returned in
   0.6 s), 150/150 frames over 5.0 s.
+- L.4c3 (2026-10-18): clap test with the Logitech BRIO camera and its
+  microphone (1080p30 MJPEG): the sound starts 0.740 s and 1.272 s into
+  the camera ISO; the hands first touch on the frames at about 0.833 s and
+  1.367 s (apart one frame earlier). The picture trails the sound by about
+  60–95 ms: V4L2 stamps buffers when they arrive, after the camera's own
+  exposure and MJPEG pipeline. Not compensated in code; a setup lines them
+  up with `sources[].audio.offset_ms = 80` on the microphone, as in OBS.

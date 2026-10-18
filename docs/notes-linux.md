@@ -165,3 +165,6 @@ in `PLAN_LINUX.md`.
 - The engine gave every source 8 s to open, which the first-time portal
   dialog can exceed; `Platform::open_timeout` now lets Linux give screens
   3 minutes.
+- A UVC camera's picture trails its microphone by about 60–95 ms (Logitech
+  BRIO, 1080p30 MJPEG, clap test): V4L2 timestamps mark buffer arrival.
+  Use `audio.offset_ms` on the microphone (about 80) to line them up.
