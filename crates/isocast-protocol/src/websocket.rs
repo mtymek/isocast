@@ -7,6 +7,7 @@
 //! The settings belong to this Mac's engine, not to a profile (as in OBS):
 //! they are kept beside the live setup (`setup.websocket.json`), and the
 //! password in the Keychain.
+use crate::wording::THIS_COMPUTER;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -128,19 +129,17 @@ impl WebsocketSettings {
         }
         let Ok(ip) = self.bind.parse::<std::net::IpAddr>() else {
             return Some(format!(
-                "bind: {:?} is not an IP address; give 127.0.0.1 (this {machine} only), an address \
-                 of this {machine}, or 0.0.0.0 (every network)",
-                self.bind,
-                machine = crate::platform_text::MACHINE
+                "bind: {:?} is not an IP address; give 127.0.0.1 ({THIS_COMPUTER} only), an address \
+                 of {THIS_COMPUTER}, or 0.0.0.0 (every network)",
+                self.bind
             ));
         };
         if !self.authentication && !ip.is_loopback() {
             return Some(format!(
                 "bind: {} reaches other computers, so going without a password (no_password) \
-                 isn't allowed there; give bind 127.0.0.1 (this {machine} only) to go without one, or \
+                 isn't allowed there; give bind 127.0.0.1 ({THIS_COMPUTER} only) to go without one, or \
                  a password",
                 self.bind,
-                machine = crate::platform_text::MACHINE
             ));
         }
         None

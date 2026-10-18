@@ -11,12 +11,12 @@ use isocast_protocol::api::{
     OutputKind,
 };
 use isocast_protocol::change::merge_patch;
-use isocast_protocol::platform_text::MACHINE;
 use isocast_protocol::{CanvasId, Codec, PROGRAM, Setup, SourceKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::capacity::{self, Judged, Memory};
+use isocast_protocol::wording::THIS_COMPUTERS;
 
 /// The short sides a camera or test pattern is offered at, largest first.
 const SIDES: [u32; 3] = [1440, 1080, 720];
@@ -1016,10 +1016,10 @@ fn summary(judgement: &Judgement) -> String {
     });
     match judgement.capacity {
         Capacity::Fits => format!(
-            "this {MACHINE}'s encoders keep up with these files (the busiest engine at about {busiest})"
+            "{THIS_COMPUTERS} encoders keep up with these files (the busiest engine at about {busiest})"
         ),
         Capacity::NoMargin => format!(
-            "this {MACHINE}'s encoders are predicted to keep up with these files with no margin \
+            "{THIS_COMPUTERS} encoders are predicted to keep up with these files with no margin \
              (the busiest engine at about {busiest}): anything else using them, like a stream \
              or a video call, may cost frames"
         ),
@@ -1032,7 +1032,7 @@ fn summary(judgement: &Judgement) -> String {
             };
             if iso {
                 format!(
-                    "this {MACHINE}'s encoders can't keep up with these files (the busiest engine at \
+                    "{THIS_COMPUTERS} encoders can't keep up with these files (the busiest engine at \
                      about {busiest}): ISO files are shed first (estimated {:.0}% frame loss) \
                      to prioritize program recordings and streams; {priority}",
                     judgement.iso_drop.max(1.0)
@@ -1044,7 +1044,7 @@ fn summary(judgement: &Judgement) -> String {
                     "the program and stream will drop frames"
                 };
                 format!(
-                    "this {MACHINE}'s encoders can't keep up with these files (the busiest engine at \
+                    "{THIS_COMPUTERS} encoders can't keep up with these files (the busiest engine at \
                      about {busiest}): {priority}"
                 )
             }
@@ -1539,7 +1539,7 @@ fn admission(
         summary(&full)
     } else {
         format!(
-            "at full size, this {MACHINE}'s encoders can't keep up with it beside the other files (the \
+            "at full size, {THIS_COMPUTERS} encoders can't keep up with it beside the other files (the \
          busiest engine at about {})",
             percent(full.load)
         )

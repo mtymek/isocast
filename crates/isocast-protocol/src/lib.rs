@@ -39,6 +39,7 @@ pub mod timeline;
 mod transition;
 pub mod virtual_camera;
 pub mod websocket;
+pub mod wording;
 
 pub use animation::*;
 pub use audio_filter::*;
@@ -53,6 +54,7 @@ pub use transition::*;
 
 use std::collections::{BTreeMap, HashSet};
 
+use crate::wording::THIS_COMPUTER;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -2591,9 +2593,8 @@ impl Setup {
                 issues.add(
                     format!("sources[{i}].audio.monitor"),
                     format!(
-                        "system audio is everything this {} plays, monitoring included, so \
-                     monitoring it would feed back; use \"off\"",
-                        platform_text::MACHINE
+                        "system audio is everything {THIS_COMPUTER} plays, monitoring included, \
+                         so monitoring it would feed back; use \"off\""
                     ),
                 );
             }

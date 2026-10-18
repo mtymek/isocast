@@ -8,6 +8,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::wording::KEYRING;
 use crate::{CanvasId, Issues};
 
 /// Streaming the program (the canvas and the program mix) to a service
@@ -569,9 +570,8 @@ impl StreamSettings {
                         &field,
                         format!(
                             "this looks like it has the stream key after /{app}/; give the server \
-                             alone ({alone}) and keep the key in the {} with `isocast \
-                             stream key set`",
-                            crate::platform_text::CREDENTIAL_STORE
+                             alone ({alone}) and keep the key in {KEYRING} with `isocast \
+                             stream key set`"
                         ),
                     );
                 }

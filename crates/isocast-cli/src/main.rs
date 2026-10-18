@@ -23,6 +23,7 @@ use isocast_protocol::stream::{MAIN_DESTINATION, StreamService, StreamState, Str
 use isocast_protocol::{CanvasId, QUICK_SOURCES, Setup, Transition};
 
 use crate::client::Client;
+use isocast_protocol::wording::{KEYRING, THIS_COMPUTER, THIS_COMPUTERS};
 
 mod client;
 mod data;
@@ -2335,8 +2336,7 @@ fn init_setup(
             isocast_protocol::api::InitParams { options, apply },
         )))?;
     let mut header = vec![format!(
-        "Made by `isocast setup init` from this {}'s devices.",
-        wording::MACHINE
+        "Made by `isocast setup init` from {THIS_COMPUTERS} devices."
     )];
     header.extend(made.notes.iter().cloned());
     let mut toml = String::new();
@@ -2812,7 +2812,7 @@ fn status(json: bool) -> Result<ExitCode> {
         None => println!("Live engine: stopped"),
     }
     if let Some(cpu) = status.cpu_percent {
-        println!("CPU: {cpu:.1}% of this {} (isocastd)", wording::MACHINE);
+        println!("CPU: {cpu:.1}% of {THIS_COMPUTER} (isocastd)");
     }
     if let Some(timeline) = &status.timeline {
         println!(
@@ -4559,11 +4559,7 @@ fn print_stream_key(stored: &StreamKey, json: bool) -> Result<ExitCode> {
     if json {
         println!("{}", serde_json::to_string_pretty(stored)?);
     } else if stored.key_set {
-        println!(
-            "Stream key for {} kept in the {}.",
-            stored.service.id(),
-            wording::CREDENTIAL_STORE
-        );
+        println!("Stream key for {} kept in {KEYRING}.", stored.service.id());
     } else {
         println!("No stream key kept for {} now.", stored.service.id());
     }

@@ -14,6 +14,7 @@ use isocast_protocol::optimize::{
 use isocast_protocol::stream::StreamService;
 
 use crate::client::Client;
+use isocast_protocol::wording::{KEYRING, THIS_COMPUTER};
 
 pub fn parse_goal(text: &str) -> Result<Goal, String> {
     match text.trim().to_ascii_lowercase().as_str() {
@@ -66,12 +67,9 @@ pub fn discover(folder: Option<PathBuf>, json: bool) -> Result<ExitCode> {
             if p.current { " (current)" } else { "" },
             p.summary,
             if p.stream.as_ref().is_some_and(|s| s.key_in_file) {
-                isocast_protocol::platform_text::select(
-                    " (stream key in plain text: --obs-stream-key moves it to the Keychain)",
-                    " (stream key in plain text: --obs-stream-key moves it to Credential Manager)",
-                )
+                format!(" (stream key in plain text: --obs-stream-key moves it to {KEYRING})")
             } else {
-                ""
+                String::new()
             }
         );
     }
@@ -128,9 +126,8 @@ pub fn speed_test(
 pub fn optimize(params: OptimizeParams, json: bool) -> Result<ExitCode> {
     if !json {
         isocast_diagnostics::diagnostic!(
-            "Optimizing for {}; benchmarking this {} takes a minute or two…",
-            params.goal.id(),
-            isocast_protocol::platform_text::MACHINE
+            "Optimizing for {}; benchmarking {THIS_COMPUTER} takes a minute or two…",
+            params.goal.id()
         );
     }
     let apply = params.apply;

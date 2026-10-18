@@ -11,7 +11,6 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use isocast_protocol::api::{Candidate, Capacity, SkippedSource, TunedStream, Tuning, Variant};
 use isocast_protocol::change::merge_patch;
-use isocast_protocol::platform_text::MACHINE;
 use isocast_protocol::{
     CanvasId, Codec, Encoder, EncoderQuality, PROGRAM, QualityPreset, Setup, SourceKind,
 };
@@ -21,6 +20,7 @@ use crate::capacity::{self, Fix, Measurement, Memory, VideoLoad, Workload};
 use crate::record::expand_home;
 use crate::source::{self, Timeline};
 use crate::{FileWriter, FramePool, Platform, Time, VideoTrackSpec, WriterSpec, space};
+use isocast_protocol::wording::THIS_COMPUTER;
 
 /// Seconds of video each benchmark encodes per stream before timing starts,
 /// so encoder start-up isn't counted.
@@ -690,7 +690,7 @@ impl<P: Platform> Tuner<'_, P> {
         let mut notes = Vec::new();
         notes.push(match own.capacity {
             Some(Capacity::Fits) if own.feasible => format!(
-                "this {MACHINE} keeps up with the setup: {:.2}× real time on hard content",
+                "{THIS_COMPUTER} keeps up with the setup: {:.2}× real time on hard content",
                 own.realtime_factor
             ),
             Some(Capacity::Fits) => format!(
@@ -700,13 +700,13 @@ impl<P: Platform> Tuner<'_, P> {
                 own.reason.as_deref().unwrap_or("doesn't fit the disk")
             ),
             Some(Capacity::NoMargin) => format!(
-                "this {MACHINE} keeps up with the setup with no margin: {:.2}× real time on hard \
+                "{THIS_COMPUTER} keeps up with the setup with no margin: {:.2}× real time on hard \
                  content, so anything else using the encoders (a stream, a call, an export) may \
                  cost frames",
                 own.realtime_factor
             ),
             Some(Capacity::CannotKeepUp) => format!(
-                "this {MACHINE} can't keep up with the setup: the encoders run at {:.2}× real time on \
+                "{THIS_COMPUTER} can't keep up with the setup: the encoders run at {:.2}× real time on \
                  hard content, so a recording would drop about {:.0}% of its frames",
                 own.realtime_factor,
                 (1.0 - own.realtime_factor) * 100.0

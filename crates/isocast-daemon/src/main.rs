@@ -3769,7 +3769,7 @@ impl Daemon {
             .is_none_or(|e| e.capacity != isocast_protocol::api::Capacity::Fits);
         let mut reason = if at_capacity {
             format!(
-                "this Mac's video encoders are at capacity, so {} {verb} dropping frames",
+                "{THIS_COMPUTERS} video encoders are at capacity, so {} {verb} dropping frames",
                 names.join(", ")
             )
         } else {
@@ -4702,6 +4702,7 @@ fn canvas_scene(state: &State, canvas: CanvasId) -> Option<String> {
     chosen_canvas_scene(state, canvas).or_else(|| state.scene.clone())
 }
 
+use isocast_protocol::wording::THIS_COMPUTERS;
 use streams::stream_status;
 
 /// When `key_problem` last asked about an account, and what it found.

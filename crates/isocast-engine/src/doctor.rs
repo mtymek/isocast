@@ -8,6 +8,7 @@ use isocast_protocol::{Codec, FilterKind, Setup, SourceKind, TransitionKind};
 
 use crate::record::{expand_home, interrupted_note, interrupted_sessions};
 use crate::{AudioTrackSpec, Platform, VideoTrackSpec, WriterSpec, space};
+use isocast_protocol::wording::ASKS;
 
 /// Recording time a disk should hold before it gets a warning.
 const COMFORTABLE_HOURS: f64 = 1.0;
@@ -79,11 +80,11 @@ pub fn doctor<P: Platform>(platform: &P, setup: Option<&Setup>, folder: Option<&
                     (Permission::NotDetermined, _) => check(
                         &name,
                         CheckStatus::Warning,
-                        isocast_protocol::platform_text::select(
-                            "not asked yet; macOS asks the first time it is needed",
-                            "not checked yet; review Windows privacy access for desktop apps",
-                        )
-                        .into(),
+                        if cfg!(windows) {
+                            "not checked yet; review Windows privacy access for desktop apps".into()
+                        } else {
+                            format!("not asked yet; {ASKS} the first time it is needed")
+                        },
                         fix,
                     ),
                     // Never a problem: recording still tries it.

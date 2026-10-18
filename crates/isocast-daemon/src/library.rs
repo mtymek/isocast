@@ -18,6 +18,7 @@ use isocast_protocol::{Issue, SETUP_VERSION, Setup, Transition};
 
 use crate::store::{self, CurrentFile};
 use crate::{Daemon, State, content_size, devices, now, relative_folder};
+use isocast_protocol::wording::KEYRING;
 
 /// A scene collection or profile in hand.
 #[derive(Debug, Clone)]
@@ -1075,11 +1076,10 @@ impl Daemon {
                          stayed behind"
                             .into(),
                     ),
-                    (Some(_), None) => notes.push(
+                    (Some(_), None) => notes.push(format!(
                         "stream_key: OBS keeps no stream key in this profile's service.json \
-                         (or keeps it in the Keychain), so set it with `isocast stream key set`"
-                            .into(),
-                    ),
+                             (or keeps it in {KEYRING}), so set it with `isocast stream key set`"
+                    )),
                 }
             }
             if let Some(name) = &params.name {
@@ -1114,13 +1114,13 @@ impl Daemon {
                         .notes
                         .retain(|n| !n.contains("its stream key stays in OBS"));
                     change.notes.push(format!(
-                        "moved the stream key from OBS's service.json to the Keychain (account \
+                        "moved the stream key from OBS's service.json to {KEYRING} (account \
                      {:?}); OBS's copy is untouched",
                         stored.account
                     ))
                 }
                 Err(err) => change.notes.push(format!(
-                    "imported, but the stream key couldn't be kept in the Keychain: {}",
+                    "imported, but the stream key couldn't be kept in {KEYRING}: {}",
                     err.message
                 )),
             }

@@ -138,6 +138,9 @@ upstream don't conflict in the 8 000-line notes file.
   - [ ] **L.3c Zero-copy VA-API input.** Shadow frames handed to VA-API on
     the same GPU as DMA-BUF, without the copy down and upload. An
     optimisation: the copy path records 1080p60 + ISOs with 0 drops.
+  - [ ] **L.3e Capacity table.** Doctor's and tune's encoder capacity
+    estimates assume Apple media engines ("1 engine(s); assumed"); give
+    VA-API and NVENC their own entries and calibrate them.
   - [ ] **L.3d LGPL software encoder.** OpenH264 for distribution builds
     whose FFmpeg has no libx264.
 - [ ] **L.4 Capture and audio.** Done when a setup with a camera, the
@@ -176,9 +179,14 @@ upstream don't conflict in the 8 000-line notes file.
     hotkeys.
   - [x] **L.6d Secret Service.** Stream keys and other secrets in the
     desktop's keyring over D-Bus.
-  - [ ] **L.6e Linux wording.** Onboarding, settings, errors, shortcut
-    labels, CLI help, doctor and MCP tool descriptions (`~/Movies/Isocast`,
-    "this Mac", "macOS asks", Finder, Keychain).
+  - [x] **L.6e1 Runtime wording.** Doctor, tune, capacity, status, stream
+    key, setup init and obs-websocket messages say "this computer", "the
+    keyring" and "the desktop asks" on Linux (`isocast_protocol::wording`;
+    macOS text unchanged).
+  - [ ] **L.6e2 Help, schema and app wording.** CLI help, MCP tool
+    descriptions, the JSON Schema's descriptions and the app's `.slint`
+    copy; best done with upstream's Windows wording pass (W.6), since the
+    same text serves every platform.
 - [ ] **L.7 Media, streaming, virtual camera.** libav media reader for
   media sources and the editor, streaming through the existing path,
   PipeWire virtual camera.
@@ -382,3 +390,8 @@ upstream don't conflict in the 8 000-line notes file.
   `application=isocast`, `service`, `account`. Verified against GNOME
   Keyring: `isocast stream key set --service twitch` stored a test key
   `secret-tool` read back, and `stream key clear` removed it.
+- L.6e1 (2026-10-18): `isocast_protocol::wording` names the computer,
+  keyring and permission asker per platform; 27 runtime messages use it
+  (macOS output byte-identical). Verified: doctor on Linux reads "this
+  computer's encoders…"; an audit confirmed every placeholder sits in a
+  formatting macro; workspace tests pass (225).

@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::devices::{Camera, CameraKind, Devices, Permission};
+use crate::wording::{ASKS, THIS_COMPUTER};
 use crate::*;
 
 /// Choices for [`init`]; each is picked for you when absent.
@@ -250,11 +251,16 @@ pub fn init(devices: &Devices, options: &InitOptions) -> Result<Initialized, Str
             Permission::Granted | Permission::NotDetermined | Permission::Unknown => {
                 iso.push("camera".to_string());
                 if permissions.camera == Permission::NotDetermined {
-                    notes.push(
-                        crate::platform_text::select("macOS asks for camera access the first time the camera is used; \
-                         `isocast permissions --request` asks now.", "Windows Camera privacy settings must allow desktop apps. isocastd.exe is the recording engine; `isocast permissions` reports access.")
-                            .into(),
-                    );
+                    notes.push(if cfg!(windows) {
+                        "Windows Camera privacy settings must allow desktop apps. isocastd.exe is \
+                         the recording engine; `isocast permissions` reports access."
+                            .into()
+                    } else {
+                        format!(
+                            "{ASKS} for camera access the first time the camera is used; \
+                             `isocast permissions --request` asks now."
+                        )
+                    });
                 }
                 if permissions.camera == Permission::Unknown {
                     notes.push(
@@ -328,11 +334,16 @@ pub fn init(devices: &Devices, options: &InitOptions) -> Result<Initialized, Str
                 format!("Microphone: {:?}.", found.name)
             });
             if permissions.microphone == Permission::NotDetermined {
-                notes.push(
-                    crate::platform_text::select("macOS asks for microphone access the first time it is used; `isocast \
-                     permissions --request` asks now.", "Windows Microphone privacy settings must allow desktop apps. isocastd.exe is the recording engine; `isocast permissions` reports access.")
-                        .into(),
-                );
+                notes.push(if cfg!(windows) {
+                    "Windows Microphone privacy settings must allow desktop apps. isocastd.exe is \
+                     the recording engine; `isocast permissions` reports access."
+                        .into()
+                } else {
+                    format!(
+                        "{ASKS} for microphone access the first time it is used; `isocast \
+                         permissions --request` asks now."
+                    )
+                });
             }
             if permissions.microphone == Permission::Unknown {
                 notes.push(
@@ -362,8 +373,7 @@ pub fn init(devices: &Devices, options: &InitOptions) -> Result<Initialized, Str
             SourceKind::SystemAudio(SystemAudioSource::default()),
         ));
         notes.push(format!(
-            "Desktop audio: what this {} plays, in the program.",
-            crate::platform_text::MACHINE
+            "Desktop audio: what {THIS_COMPUTER} plays, in the program."
         ));
     }
     let program_audio: Vec<String> = sources
