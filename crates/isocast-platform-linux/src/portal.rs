@@ -16,6 +16,7 @@ use ashpd::desktop::{
 };
 use futures_util::StreamExt;
 use isocast_engine::{CaptureFormat, ScreenTarget, VideoSink};
+use isocast_protocol::api::{ScreenPickKind, ScreenPicked};
 use isocast_protocol::devices::Display;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,7 @@ static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static DECLINED: Mutex<BTreeMap<String, Instant>> = Mutex::new(BTreeMap::new());
 const MAX_SETTINGS: u64 = 64 * 1024;
+const MAX_SAVED: usize = 32;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Saved {
@@ -63,8 +65,8 @@ fn save(key: &str, saved: Saved) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("capture settings lock poisoned"))?;
     let mut all = load()?;
     ensure!(
-        all.contains_key(key) || all.len() < 32,
-        "at most 32 saved portal selections are supported"
+        all.contains_key(key) || all.len() < MAX_SAVED,
+        "at most {MAX_SAVED} saved portal selections are supported"
     );
     all.insert(key.to_owned(), saved);
     let bytes = serde_json::to_vec(&all)?;
@@ -109,11 +111,7 @@ pub fn displays() -> Result<Vec<Display>> {
         .into_iter()
         .filter(|(id, _)| !id.starts_with(WINDOW_KEY))
         .map(|(id, info)| Display {
-            name: if id == "main" {
-                "Choose a screen (desktop portal)".into()
-            } else {
-                format!("Portal screen {id}")
-            },
+            name: display_name(&id),
             main: id == "main",
             id,
             built_in: false,
@@ -122,6 +120,16 @@ pub fn displays() -> Result<Vec<Display>> {
             refresh_rate: 0.0,
         })
         .collect())
+}
+
+fn display_name(id: &str) -> String {
+    if id == "main" {
+        "Choose a screen (desktop portal)".into()
+    } else if id.starts_with(PICKED) {
+        "Screen chosen in the desktop portal".into()
+    } else {
+        format!("Portal screen {id}")
+    }
 }
 
 pub fn allow_prompt() {
@@ -191,6 +199,159 @@ pub fn saved_size(target: &ScreenTarget<'_>) -> Option<(u32, u32)> {
     (saved.width > 0 && saved.height > 0).then_some((saved.width, saved.height))
 }
 
+type Session = ashpd::desktop::Session<Screencast>;
+
+/// The ScreenCast portal on a connection of its own, and a new session.
+async fn connect() -> Result<(Screencast, Session)> {
+    // A dedicated connection belongs to the caller's runtime. ASHPD's
+    // process-global connection would outlive the first runtime.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let connection = zbus::Connection::session().await?;
+        let portal = Screencast::with_connection(connection)
+            .await
+            .context("connect to desktop ScreenCast portal")?;
+        let session = portal.create_session(Default::default()).await?;
+        Ok::<_, anyhow::Error>((portal, session))
+    })
+    .await
+    .context("desktop portal connection timed out")?
+}
+
+/// The one stream the portal started, and whether it gave a restore token.
+struct Selected {
+    node: u32,
+    width: u32,
+    height: u32,
+    remembered: bool,
+}
+
+/// Ask the portal for one screen (or, with `window`, one window), which
+/// `token` may grant without its dialog, and save the grant under `key`.
+async fn select(
+    portal: &Screencast,
+    session: &Session,
+    key: &str,
+    window: bool,
+    cursor: Option<CursorMode>,
+    token: Option<&str>,
+) -> Result<Selected> {
+    let source = if window {
+        SourceType::Window
+    } else {
+        SourceType::Monitor
+    };
+    let options = SelectSourcesOptions::default()
+        .set_sources(Some(source.into()))
+        .set_multiple(false)
+        .set_cursor_mode(cursor)
+        .set_persist_mode(PersistMode::ExplicitlyRevoked)
+        .set_restore_token(token);
+    portal.select_sources(session, options).await?.response()?;
+    let response = portal
+        .start(session, None, Default::default())
+        .await?
+        .response()?;
+    ensure!(
+        response.streams().len() == 1,
+        "desktop portal must return exactly one screen per source"
+    );
+    let stream = &response.streams()[0];
+    let (width, height) = stream.size().unwrap_or((0, 0));
+    let token = response.restore_token().map(str::to_owned);
+    let selected = Selected {
+        node: stream.pipe_wire_node_id(),
+        width: width.max(0) as u32,
+        height: height.max(0) as u32,
+        remembered: token.is_some(),
+    };
+    save(
+        key,
+        Saved {
+            token,
+            width: selected.width,
+            height: selected.height,
+        },
+    )?;
+    Ok(selected)
+}
+
+/// What `screen_pick` gives a source: `picked:` and 12 hex digits.
+const PICKED: &str = "picked:";
+
+fn pick_value(id: u64) -> String {
+    format!("{PICKED}{:012x}", id & 0xffff_ffff_ffff)
+}
+
+/// A `picked:` value no saved selection has yet, if one more fits.
+fn new_pick() -> Result<String> {
+    use std::hash::BuildHasher;
+    let _lock = SETTINGS_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("capture settings lock poisoned"))?;
+    let saved = load()?;
+    ensure!(
+        saved.len() < MAX_SAVED,
+        "screen_pick: {MAX_SAVED} portal selections are saved already, the most kept; remove \
+         ones no source uses from {}",
+        settings().display()
+    );
+    loop {
+        let seed = (std::time::SystemTime::now(), std::process::id());
+        let value = pick_value(std::collections::hash_map::RandomState::new().hash_one(seed));
+        if !saved.contains_key(&value) && !saved.contains_key(&format!("{WINDOW_KEY}{value}")) {
+            return Ok(value);
+        }
+    }
+}
+
+/// Show the portal's dialog for a window or a screen and save the grant
+/// under a new `picked:` value, which a source then gives as its `app` or
+/// `display` to reopen exactly that choice: each source keeps its own.
+pub fn pick(kind: ScreenPickKind) -> Result<ScreenPicked> {
+    let value = new_pick()?;
+    let (target, field, what) = match kind {
+        ScreenPickKind::Window => (
+            ScreenTarget::Window {
+                app: &value,
+                title: None,
+            },
+            "app",
+            "window",
+        ),
+        ScreenPickKind::Display => (ScreenTarget::Display(&value), "display", "screen"),
+    };
+    let (key, window) = target_key(&target)?;
+    let selected = std::thread::Builder::new()
+        .name("linux-screen-pick".into())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            runtime.block_on(async {
+                let (portal, session) = connect().await?;
+                let selected = tokio::time::timeout(
+                    Duration::from_secs(180),
+                    select(&portal, &session, &key, window, None, None),
+                )
+                .await
+                .context("nothing was chosen within 3 minutes")
+                .and_then(|result| result);
+                let _ = tokio::time::timeout(Duration::from_secs(2), session.close()).await;
+                selected
+            })
+        })?
+        .join()
+        .map_err(|_| anyhow::anyhow!("screen_pick: the portal thread panicked"))?
+        .with_context(|| format!("screen_pick: choose a {what} in the desktop's sharing dialog"))?;
+    Ok(ScreenPicked {
+        field: field.into(),
+        value,
+        width: selected.width,
+        height: selected.height,
+        remembered: selected.remembered,
+    })
+}
+
 pub fn capture(
     target: ScreenTarget<'_>,
     fps: u32,
@@ -231,17 +392,9 @@ pub fn capture(
         let result = (|| -> Result<()> {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
             runtime.block_on(async {
-                // A dedicated connection belongs to this runtime. ASHPD's
-                // process-global connection would outlive the first runtime.
-                let connecting = tokio::time::timeout(Duration::from_secs(10), async {
-                    let connection = zbus::Connection::session().await?;
-                    let portal = Screencast::with_connection(connection).await.context("connect to desktop ScreenCast portal")?;
-                    let session = portal.create_session(Default::default()).await?;
-                    Ok::<_, anyhow::Error>((portal, session))
-                });
                 let (portal, session) = tokio::select! {
                     _ = &mut stopped => return Ok(()),
-                    result = connecting => result.context("desktop portal connection timed out")??,
+                    result = connect() => result?,
                 };
                 let mut closed = tokio::time::timeout(Duration::from_secs(5), session.receive_closed())
                     .await.context("desktop portal signal subscription timed out")??;
@@ -249,18 +402,9 @@ pub fn capture(
                     let available = portal.available_cursor_modes().await?;
                     let requested = if cursor { CursorMode::Embedded } else { CursorMode::Hidden };
                     ensure!(available.contains(requested), "desktop portal cannot provide the requested cursor mode");
-                    let options = SelectSourcesOptions::default()
-                        .set_sources(Some(if window { SourceType::Window } else { SourceType::Monitor }.into())).set_multiple(false)
-                        .set_cursor_mode(requested).set_persist_mode(PersistMode::ExplicitlyRevoked)
-                        .set_restore_token(token.as_deref());
-                    portal.select_sources(&session, options).await?.response()?;
-                    let response = portal.start(&session, None, Default::default()).await?.response()?;
-                    ensure!(response.streams().len() == 1, "desktop portal must return exactly one screen per source");
-                    let stream = &response.streams()[0];
-                    let (width, height) = stream.size().unwrap_or((0, 0));
-                    save(&key, Saved { token: response.restore_token().map(str::to_owned), width: width.max(0) as u32, height: height.max(0) as u32 })?;
+                    let selected = select(&portal, &session, &key, window, Some(requested), token.as_deref()).await?;
                     let fd = portal.open_pipe_wire_remote(&session, Default::default()).await?;
-                    Ok::<_, anyhow::Error>((fd, stream.pipe_wire_node_id()))
+                    Ok::<_, anyhow::Error>((fd, selected.node))
                 };
                 let opened = tokio::select! {
                     _ = &mut stopped => Err(anyhow::anyhow!("screen sharing cancelled")),
@@ -351,5 +495,27 @@ mod tests {
         }
         let long = "x".repeat(130);
         assert!(target_key(&ScreenTarget::Display(&long)).is_err());
+    }
+
+    #[test]
+    fn picks_are_saved_under_their_own_value() {
+        let value = pick_value(u64::MAX);
+        assert_eq!(value, "picked:ffffffffffff");
+        assert_eq!(pick_value(0xabc), "picked:000000000abc");
+        assert_eq!(
+            target_key(&ScreenTarget::Display(&value)).unwrap(),
+            (value.clone(), false)
+        );
+        assert_eq!(
+            target_key(&ScreenTarget::Window {
+                app: &value,
+                title: None
+            })
+            .unwrap(),
+            (format!("window:{value}"), true)
+        );
+        assert_eq!(display_name("main"), "Choose a screen (desktop portal)");
+        assert_eq!(display_name(&value), "Screen chosen in the desktop portal");
+        assert_eq!(display_name("left"), "Portal screen left");
     }
 }

@@ -21,7 +21,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use isocast_protocol::SourceKind;
-use isocast_protocol::api::Method;
+use isocast_protocol::api::{Method, ScreenPickKind};
 use serde_json::{Value, json};
 use slint::{ComponentHandle, SharedString};
 
@@ -1467,6 +1467,12 @@ fn show_quick_setting(app: &Rc<App>, window: &AppWindow) {
     };
     let name = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
     match &source.kind {
+        SourceKind::Display(_) if devices::PICKED_IN_DIALOG => choice(
+            &area,
+            "Display",
+            "display",
+            devices::picked_options(&text("display"), "screen"),
+        ),
         SourceKind::Display(_) => choice(
             &area,
             "Display",
@@ -1484,6 +1490,12 @@ fn show_quick_setting(app: &Rc<App>, window: &AppWindow) {
             "Device",
             "device",
             devices::microphone_options(devices.as_ref(), &text("device")),
+        ),
+        SourceKind::Window(_) if devices::PICKED_IN_DIALOG => choice(
+            &area,
+            "Window",
+            "app",
+            devices::picked_options(&text("app"), "window"),
         ),
         SourceKind::Window(_) | SourceKind::Application(_) => choice(
             &area,
@@ -1562,6 +1574,17 @@ fn quick_choose(app: &Rc<App>, value: &str) {
     let Some(source) = selected_source(app) else {
         return;
     };
+    if value == devices::PICK {
+        let kind = match source.kind.label() {
+            "window" => ScreenPickKind::Window,
+            "display" => ScreenPickKind::Display,
+            _ => return,
+        };
+        app.sources
+            .dialogs
+            .pick_for(app, kind, source.id.clone(), false);
+        return;
+    }
     let now = source_value(app, &source.id);
     let mut patch = json!({ "id": source.id });
     match source.kind.label() {

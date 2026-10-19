@@ -16318,6 +16318,68 @@
         ],
         "type": "object"
       },
+      "ScreenPickKind": {
+        "description": "A window or a whole screen.",
+        "enum": [
+          "window",
+          "display"
+        ],
+        "type": "string"
+      },
+      "ScreenPickParams": {
+        "additionalProperties": false,
+        "description": "What `screen_pick` asks the desktop for.",
+        "properties": {
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScreenPickKind"
+              }
+            ],
+            "description": "`window` (for a `window` source) or `display` (for a `display`\nsource)."
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ScreenPicked": {
+        "description": "What was chosen in the desktop's sharing dialog.",
+        "properties": {
+          "field": {
+            "description": "The source setting to give `value`: `app` for a window, `display`\nfor a screen.",
+            "type": "string"
+          },
+          "height": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "remembered": {
+            "description": "Whether the desktop remembers the choice. If not, its dialog asks\nagain each time the source starts (on Hyprland, tick \"Allow a\nrestore token\" in it).",
+            "type": "boolean"
+          },
+          "value": {
+            "description": "`picked:` and 12 hex digits, which names this choice.",
+            "type": "string"
+          },
+          "width": {
+            "description": "The size the desktop shares, in pixels; 0 if it didn't say.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field",
+          "value",
+          "width",
+          "height",
+          "remembered"
+        ],
+        "type": "object"
+      },
       "Scroll": {
         "description": "Moves the picture continuously, wrapping around (OBS's Scroll).",
         "properties": {
@@ -26979,6 +27041,36 @@
         }
       },
       "summary": "End this connection's WebRTC viewer (WHEP DELETE semantics)."
+    },
+    {
+      "description": "Choose a screen or a window in the desktop's sharing dialog, for a\n`display` or `window` source, where apps can't list the screens and\nwindows themselves (Linux). Waits up to 3 minutes for the choice.\nReturns [`ScreenPicked`]: the value to give the source, which opens\nthe same screen or window without asking again while the desktop\nremembers the choice. Only on this machine; refused where windows\nare listed instead (macOS, Windows).",
+      "name": "screen_pick",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "`window` (for a `window` source) or `display` (for a `display`\nsource).",
+          "name": "kind",
+          "required": true,
+          "schema": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ScreenPickKind"
+              }
+            ],
+            "description": "`window` (for a `window` source) or `display` (for a `display`\nsource)."
+          }
+        }
+      ],
+      "result": {
+        "name": "ScreenPicked",
+        "schema": {
+          "$ref": "#/components/schemas/ScreenPicked"
+        }
+      },
+      "summary": "Choose a screen or a window in the desktop's sharing dialog, for a `display` or `window` source, where apps can't list the screens and windows themselves (Linux).",
+      "x-isocast-params": {
+        "$ref": "#/components/schemas/ScreenPickParams"
+      }
     }
   ],
   "openrpc": "1.3.2",
