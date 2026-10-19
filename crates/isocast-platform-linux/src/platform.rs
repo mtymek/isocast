@@ -123,7 +123,7 @@ impl Platform for LinuxPlatform {
                 .notes
                 .push(format!("PipeWire audio devices: {error:#}")),
         }
-        devices.notes.push("Screen selection happens in the desktop portal when capture opens. Sizes are unknown until selected; saved sizes describe the last grant. Restore tokens avoid repeated prompts only on portals that support persistent grants. Desktop audio uses the default output's monitor through a system_audio source.".into());
+        devices.notes.push("Screen selection happens in the desktop portal when capture opens. Sizes are unknown until selected; saved sizes describe the last grant. Restore tokens avoid repeated prompts only on portals that support persistent grants. To choose ahead, `isocast screen pick [--display]` (method `screen_pick`) shows the dialog and returns a `picked:` value for a window source's `app` or a display source's `display`. Desktop audio uses the default output's monitor through a system_audio source.".into());
         Ok(devices)
     }
     fn permissions(&self) -> Result<PermissionsReport> {
@@ -172,6 +172,12 @@ impl Platform for LinuxPlatform {
             | SourceKind::ApplicationAudio(_) => 12,
             _ => 8,
         })
+    }
+    fn pick_screen(
+        &self,
+        kind: isocast_protocol::api::ScreenPickKind,
+    ) -> Result<isocast_protocol::api::ScreenPicked> {
+        portal::pick(kind)
     }
     fn request_permissions(&self, only: Option<PermissionKind>) -> Result<PermissionsReport> {
         if only.is_none() || only == Some(PermissionKind::ScreenRecording) {

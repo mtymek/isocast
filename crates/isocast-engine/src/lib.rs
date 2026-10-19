@@ -190,6 +190,21 @@ pub trait Platform: Clone + Send + Sync + 'static {
         std::time::Duration::from_secs(8)
     }
 
+    /// Ask the desktop which screen or window a source shows, where apps
+    /// can't list them (Linux's sharing dialog), and remember the choice
+    /// under the value returned. Refused where screens and windows are
+    /// listed.
+    fn pick_screen(
+        &self,
+        _kind: isocast_protocol::api::ScreenPickKind,
+    ) -> anyhow::Result<isocast_protocol::api::ScreenPicked> {
+        anyhow::bail!(
+            "screen_pick: only Linux chooses screens and windows in the desktop's sharing \
+             dialog; here `isocast devices` (method `devices`) lists them: give a display \
+             source's `display` or a window source's `app` from it"
+        )
+    }
+
     /// Ask the OS for screen recording, camera and microphone access where
     /// it hasn't been decided (only `only`, if given), showing its prompts,
     /// and wait a while for the answers. Returns the permissions afterwards.

@@ -1663,6 +1663,10 @@ impl Daemon {
             Method::Pause => self.set_paused(true).and_then(to_json),
             Method::Resume => self.set_paused(false).and_then(to_json),
             Method::Devices => devices().map_err(failed).and_then(to_json),
+            Method::ScreenPick(params) => native()
+                .pick_screen(params.kind)
+                .map_err(failed)
+                .and_then(to_json),
             Method::Get(params) => self.get(params.unwrap_or_default()).and_then(to_json),
             Method::Plan(change) => {
                 let state = self.state.read();
