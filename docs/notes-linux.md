@@ -216,3 +216,9 @@ in `PLAN_LINUX.md`.
   platform's device list. The pick runs on its own connection in the app,
   since the app's calls share one worker and the dialog can wait 3
   minutes.
+- 2026-10-19: windows shared by the portal can have odd sizes (2118x1059
+  seen); screen frames are rounded down to even sizes, since 4:2:0 frame
+  pools and encoders refuse odd ones.
+- xdg-desktop-portal-hyprland's log is block-buffered when it runs under
+  systemd: journal timestamps are flush times, so a quiet log doesn't
+  mean it stopped answering.

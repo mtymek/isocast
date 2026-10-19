@@ -1030,9 +1030,6 @@ impl Dialogs {
     /// a connection of its own (the dialog waits for the person, and the
     /// window's calls mustn't wait with it).
     fn pick_screen(&self, app: &Rc<App>, kind: ScreenPickKind) {
-        if app.mode.offscreen {
-            return;
-        }
         let creating = self.pending.borrow().is_some();
         // A draft has no id yet; Properties shows it with none.
         let id = if creating {
@@ -1040,6 +1037,15 @@ impl Dialogs {
         } else {
             self.props_source.borrow().clone()
         };
+        self.pick_for(app, kind, id, creating);
+    }
+
+    /// Show the desktop's sharing dialog for source `id` (`creating`: the
+    /// draft in Properties), and set what it chose.
+    pub fn pick_for(&self, app: &Rc<App>, kind: ScreenPickKind, id: String, creating: bool) {
+        if app.mode.offscreen {
+            return;
+        }
         let spawned = std::thread::Builder::new()
             .name("screen pick".into())
             .spawn(move || {
@@ -1081,8 +1087,12 @@ impl Dialogs {
             }
         };
         let changes = form::one(&picked.field, json!(picked.value));
-        let still_open =
-            *self.props_source.borrow() == id && self.pending.borrow().is_some() == creating;
+        let properties = app
+            .window()
+            .is_some_and(|window| window.global::<Ui>().get_dialog() == "properties");
+        let still_open = properties
+            && *self.props_source.borrow() == id
+            && self.pending.borrow().is_some() == creating;
         if still_open {
             self.props_change(app, changes, None);
             if let Some(window) = app.window() {

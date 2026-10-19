@@ -265,8 +265,13 @@ fn format_pod(size: Option<(i32, i32)>, fps: u32) -> Result<Vec<u8>> {
 /// What the stream negotiated.
 #[derive(Clone, Copy)]
 struct Negotiated {
+    /// The frames' size: the stream's, rounded down to even numbers (4:2:0
+    /// files need them; a window can be any size), dropping at most the
+    /// last column and row.
     width: u32,
     height: u32,
+    /// The stream's own width, for rows the stream gives no stride for.
+    stream_width: u32,
     /// Red first (RGBx/RGBA) rather than blue.
     rgb: bool,
 }
@@ -343,8 +348,9 @@ pub fn capture(
                         }
                         let format = info.format();
                         let negotiated = Negotiated {
-                            width: info.size().width,
-                            height: info.size().height,
+                            width: (info.size().width & !1).max(2),
+                            height: (info.size().height & !1).max(2),
+                            stream_width: info.size().width,
                             rgb: matches!(
                                 format,
                                 spa::param::video::VideoFormat::RGBx
@@ -387,7 +393,11 @@ pub fn capture(
                         };
                         let (width, height) =
                             (negotiated.width as usize, negotiated.height as usize);
-                        let stride = if stride == 0 { width * 4 } else { stride };
+                        let stride = if stride == 0 {
+                            negotiated.stream_width as usize * 4
+                        } else {
+                            stride
+                        };
                         if raw.len() < offset + stride * (height - 1) + width * 4 {
                             return;
                         }
