@@ -658,6 +658,12 @@ enum Command {
         #[command(subcommand)]
         command: CanvasCommand,
     },
+    /// Choose screens and windows in the desktop's sharing dialog, where
+    /// they can't be listed (Linux)
+    Screen {
+        #[command(subcommand)]
+        command: ScreenCommand,
+    },
     /// The replay buffer: keep the last seconds of the program in memory,
     /// and save them to a file on demand.
     Replay {
@@ -863,6 +869,24 @@ enum StreamCommand {
         /// Seconds to send for, 3 to 20 (8 by default).
         #[arg(long)]
         seconds: Option<u32>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScreenCommand {
+    /// Choose a window (or with --display, a screen) in the desktop's
+    /// sharing dialog, and print the value to give a `window` source's
+    /// `app` (a `display` source's `display`). That source then opens the
+    /// same window without asking again while the desktop remembers the
+    /// choice. Waits up to 3 minutes. Linux only: elsewhere `isocast
+    /// devices` lists the windows
+    Pick {
+        /// Choose a whole screen instead of a window.
+        #[arg(long)]
+        display: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -1838,6 +1862,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Command::Replay { command } => replay::run(command),
         Command::Websocket { command } => websocket::run(command),
         Command::Debug { command } => debug::run(command),
+        Command::Screen {
+            command: ScreenCommand::Pick { display, json },
+        } => screen_pick(display, json),
         Command::Canvas { command } => {
             use isocast_protocol::api::Canvases;
             let mut client = Client::connect_or_launch()?;
@@ -4700,6 +4727,32 @@ fn print_stream_lines(stream: &StreamStatus) {
 
 /// Formats shown per camera before the rest are left to --json.
 const MAX_FORMATS_SHOWN: usize = 8;
+
+fn screen_pick(display: bool, json: bool) -> Result<ExitCode> {
+    use isocast_protocol::api::{ScreenPickKind, ScreenPickParams, ScreenPicked};
+    let kind = if display {
+        ScreenPickKind::Display
+    } else {
+        ScreenPickKind::Window
+    };
+    let picked: ScreenPicked =
+        Client::connect_or_launch()?.call(Method::ScreenPick(ScreenPickParams { kind }))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&picked)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    println!("{} = \"{}\"", picked.field, picked.value);
+    if picked.width > 0 {
+        println!("{}×{}", picked.width, picked.height);
+    }
+    if !picked.remembered {
+        println!(
+            "The desktop didn't keep the choice, so its dialog asks again each time the source \
+             starts (on Hyprland, tick \"Allow a restore token\")."
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
 fn devices(json: bool) -> Result<ExitCode> {
     let devices = list_devices()?;

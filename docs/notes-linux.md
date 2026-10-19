@@ -206,3 +206,13 @@ in `PLAN_LINUX.md`.
   `DRIVER | MAP_BUFFERS` (not `ALLOC_BUFFERS`), a Buffers reply without
   `dataType`, and a Header meta; otherwise consumers fail with "target
   not found" or never get a format. `pipewire-vircam`'s source showed it.
+- 2026-10-19: a screen or window chosen with `screen_pick` is named by a
+  `picked:<id>` value in the source's own `app` or `display`, not by a new
+  setup field or by source id: the restore token key stays
+  `window:{app}:{title}`, `ScreenTarget` and the macOS and Windows
+  platforms are untouched, and copying a source keeps its window. The app
+  decides with `cfg!(target_os = "linux")` (`PICKED_IN_DIALOG`) rather
+  than a `Devices` field, which would have meant editing every
+  platform's device list. The pick runs on its own connection in the app,
+  since the app's calls share one worker and the dialog can wait 3
+  minutes.

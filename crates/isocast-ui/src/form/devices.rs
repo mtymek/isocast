@@ -473,6 +473,33 @@ pub fn match_window<'a>(
 /// The option standing for part of a title, typed.
 pub const TITLE_PART: &str = "\u{200b}part of a title";
 
+/// Screens and windows are chosen in the desktop's sharing dialog
+/// (`screen_pick`), since the engine can't list them (Linux).
+pub const PICKED_IN_DIALOG: bool = cfg!(target_os = "linux");
+
+/// The choice that opens the desktop's sharing dialog.
+pub const PICK: &str = "\u{200b}pick in the dialog";
+
+/// A screen or window setting chosen in the desktop's sharing dialog: what
+/// it has now, and the dialog (`what`: "window" or "screen").
+pub fn picked_options(value: &str, what: &str) -> Vec<Choice> {
+    let chosen = value.starts_with("picked:");
+    let mut options = vec![if chosen {
+        choice(value, format!("The chosen {what}"), "kept by the desktop")
+    } else if value.is_empty() {
+        choice("", format!("No {what} chosen"), "")
+    } else {
+        choice(value, value, "the desktop asks when it starts")
+    }];
+    let again = if chosen { "another" } else { "a" };
+    options.push(choice(
+        PICK,
+        format!("Choose {again} {what}…"),
+        "in the desktop’s dialog",
+    ));
+    options
+}
+
 /// A window source's title choices: any window of the app, one of its
 /// windows' whole titles, or part of a title (`TITLE_PART`).
 pub fn title_options(devices: Option<&Devices>, app: &str, value: &str) -> Vec<Choice> {

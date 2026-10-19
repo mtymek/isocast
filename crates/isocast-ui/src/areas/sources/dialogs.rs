@@ -7,6 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
+use isocast_protocol::api::{Method, ScreenPickKind, ScreenPickParams, ScreenPicked};
 use isocast_protocol::{CanvasId, Setup};
 use serde_json::{Map, Value, json};
 use slint::{ComponentHandle, SharedString};
@@ -222,6 +223,9 @@ pub fn missing(kind: &str, settings: &Map<String, Value>) -> Option<&'static str
         "image" if text("path").is_empty() => Some("Choose an image file."),
         "slideshow" | "media" if empty_list("files") => Some("Choose at least one file."),
         "camera" if text("device").is_empty() => Some("Choose a device."),
+        "window" if form::devices::PICKED_IN_DIALOG && text("app").is_empty() => {
+            Some("Choose a window.")
+        }
         "window" | "application" | "application_audio" if text("app").is_empty() => {
             Some("Choose an app.")
         }
@@ -687,6 +691,7 @@ impl Dialogs {
             return;
         }
         let settings = starting(&kind, app.session.borrow().devices.as_ref());
+        let is_window = kind == "window";
         if missing(&kind, &settings).is_some() {
             // Not valid yet: Properties collects what it needs, then adds it.
             let mut draft = Map::new();
@@ -701,6 +706,10 @@ impl Dialogs {
                 draft,
             });
             app.open_dialog("properties", "");
+            // The window is chosen in the desktop's dialog: open it now.
+            if form::devices::PICKED_IN_DIALOG && is_window {
+                self.pick_screen(app, ScreenPickKind::Window);
+            }
             return;
         }
         self.close(app);
@@ -1009,8 +1018,91 @@ impl Dialogs {
             },
             Outcome::Reshow => {}
             Outcome::Nothing => return,
+            Outcome::Pick(kind) => {
+                self.pick_screen(app, kind);
+                return;
+            }
         }
         self.reshow(app, window, form_id);
+    }
+
+    /// Show the desktop's sharing dialog for the source in Properties, on
+    /// a connection of its own (the dialog waits for the person, and the
+    /// window's calls mustn't wait with it).
+    fn pick_screen(&self, app: &Rc<App>, kind: ScreenPickKind) {
+        if app.mode.offscreen {
+            return;
+        }
+        let creating = self.pending.borrow().is_some();
+        // A draft has no id yet; Properties shows it with none.
+        let id = if creating {
+            String::new()
+        } else {
+            self.props_source.borrow().clone()
+        };
+        let spawned = std::thread::Builder::new()
+            .name("screen pick".into())
+            .spawn(move || {
+                let result = crate::daemon::connect()
+                    .and_then(|mut client| {
+                        client.call::<ScreenPicked>(Method::ScreenPick(ScreenPickParams { kind }))
+                    })
+                    .map_err(|error| format!("{error:#}"));
+                let _ = slint::invoke_from_event_loop(move || {
+                    crate::window::with_app(|app| {
+                        app.sources.dialogs.picked(app, &id, creating, result);
+                    });
+                });
+            });
+        if let Err(error) = spawned {
+            app.toast(
+                ToastKind::Error,
+                "Couldn’t open the sharing dialog",
+                error.to_string(),
+            );
+        }
+    }
+
+    /// What the sharing dialog chose for source `id` (`creating`: a draft
+    /// in Properties): its `app` or `display`, in Properties if it is still
+    /// open on that source, else straight to the source.
+    fn picked(
+        &self,
+        app: &Rc<App>,
+        id: &str,
+        creating: bool,
+        result: Result<ScreenPicked, String>,
+    ) {
+        let picked = match result {
+            Ok(picked) => picked,
+            Err(message) => {
+                app.toast(ToastKind::Error, "Nothing was chosen to share", message);
+                return;
+            }
+        };
+        let changes = form::one(&picked.field, json!(picked.value));
+        let still_open =
+            *self.props_source.borrow() == id && self.pending.borrow().is_some() == creating;
+        if still_open {
+            self.props_change(app, changes, None);
+            if let Some(window) = app.window() {
+                self.show_props(app, &window);
+            }
+        } else if !creating {
+            let mut source = json!({ "id": id });
+            if let Some(object) = source.as_object_mut() {
+                object.extend(changes);
+            }
+            app.edit(json!({ "sources": [source] }), EditOptions::default());
+        }
+        if !picked.remembered {
+            app.toast(
+                ToastKind::Warning,
+                "The desktop won’t remember this choice",
+                "Its sharing dialog asks again each time the source starts. On Hyprland, tick \
+                 “Allow a restore token” in it.",
+            );
+        }
     }
 
     fn reshow(&self, app: &Rc<App>, window: &AppWindow, form_id: &str) {

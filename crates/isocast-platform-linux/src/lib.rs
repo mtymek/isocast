@@ -143,6 +143,13 @@ mod platform {
             }
         }
 
+        fn pick_screen(
+            &self,
+            kind: isocast_protocol::api::ScreenPickKind,
+        ) -> Result<isocast_protocol::api::ScreenPicked> {
+            crate::screen::pick(kind)
+        }
+
         /// A PipeWire camera node apps can choose (browsers and other
         /// PipeWire camera clients).
         fn virtual_camera_sink(

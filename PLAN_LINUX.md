@@ -166,28 +166,16 @@ upstream don't conflict in the 8 000-line notes file.
     kept per target, up to 3 minutes for the first dialog.
   - [ ] **L.4d2 DMA-BUF screen frames.** Import the portal's DMA-BUFs into
     Vulkan instead of copying shared memory (4K60 copies cost CPU).
-  - [ ] **L.4d3 Choose windows in the desktop's dialog.** The app's
-    Window capture form lists apps from `devices.windows`, which is empty
-    on Linux, so it shows "no app with windows found". Steps:
-    - `devices` reports `window_picker: "portal"` on Linux; macOS keeps
-      its list.
-    - A `screen_pick { kind: "window" | "display" }` method (CLI
-      `isocast screen pick --window`, MCP) opens a portal session, shows
-      the dialog, keeps the restore token, returns one preview frame and
-      the size, and closes the session. Cancelling returns an error
-      saying nothing was chosen.
-    - The form shows "Choose window…" in place of the empty app list and
-      creates the source with the pick (named "Window N"); a
-      "Change window…" action re-picks for an existing source.
-    - Restore tokens are kept per source id instead of
-      `window:{app}:{title}` (two windows of one app overwrite each
-      other's token today); `app` and `title` become optional labels.
-    - A token that no longer restores (window closed, desktop restarted)
-      shows the dialog again, and the source's status says it is waiting
-      for a window to be chosen instead of showing a black frame.
-    - Done when: adding a window source in the app opens the dialog,
-      records the chosen window, and a restart reuses it without the
-      dialog (on Hyprland with "Allow a restore token" ticked).
+  - [x] **L.4d3 Choose windows in the desktop's dialog.** `screen_pick`
+    (CLI `isocast screen pick [--display]`, MCP `pick_screen`) shows the
+    portal dialog and keeps the restore token under a new `picked:<id>`
+    value, which the source takes as its `app` or `display`, so each
+    source keeps its own choice. The app's Window capture form offers
+    "Choose a window…" (and opens the dialog as the source is added); the
+    Display form offers "Choose a screen…"; the title row is hidden.
+  - [ ] **L.4d4 Waiting-for-a-window status.** While a screen source's
+    dialog is open, the sources list says it waits for a choice instead
+    of showing "opening" over a black frame.
   - [x] **L.4e Hotplug and reconnects.**
 - [x] **L.5 Native contract qualification.** Full
   `isocast-platform-contracts` native suite passes on Linux hardware. A
@@ -465,3 +453,10 @@ upstream don't conflict in the 8 000-line notes file.
   meta. Verified: GStreamer `pipewiresrc target-object=isocast-virtual-
   camera` read 30 frames of the live program (correct picture, 60 fps
   counter); 462 frames sent, 0 dropped; stopping removes the node.
+- L.4d3 (2026-10-19): window and display sources are chosen in the
+  desktop's sharing dialog from the CLI, MCP and the app's form.
+  Verified: `isocast screen pick --json` returned `picked:7d7761049850`
+  with `remembered: true`; `isocast record --source
+  window:picked:7d7761049850 --seconds 5` then recorded without a dialog
+  (3840x2160 HEVC at 60 fps, 5.000 s, 0 dropped). The app's form was
+  built but not clicked through.

@@ -41,8 +41,10 @@ pub fn devices() -> Result<Devices> {
         })
         .collect();
     notes.push(
-        "screens and windows are chosen in the desktop's screen-sharing dialog the first time \
-         a setup records them; the choice is kept"
+        "windows can't be listed here: choose a screen or a window in the desktop's \
+         screen-sharing dialog with `isocast screen pick` (method `screen_pick`) and give the \
+         value it returns as the source's `app` or `display`; otherwise the dialog asks the \
+         first time a source starts, and the choice is kept"
             .into(),
     );
     Ok(Devices {

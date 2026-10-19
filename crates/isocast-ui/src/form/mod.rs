@@ -18,7 +18,7 @@ pub mod schema;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use isocast_protocol::api::{SourceRun, SourceStatus};
+use isocast_protocol::api::{ScreenPickKind, SourceRun, SourceStatus};
 use isocast_protocol::devices::Devices;
 use serde_json::{Map, Value, json};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -139,6 +139,8 @@ pub fn build(ctx: &Context, fields: &[Field], value: &Map<String, Value>) -> Vec
         .iter()
         .filter(|f| !ctx.skip.contains(&f.name.as_str()))
         .filter(|f| !(camera && CAMERA_FORMAT.contains(&f.name.as_str())))
+        // The dialog chooses the window itself, not by its title.
+        .filter(|f| !(dev::PICKED_IN_DIALOG && ctx.kind == "window" && f.name == "title"))
         .collect();
     // When any row ends in a button, every row keeps that lane, so the
     // fields share one right edge.
@@ -377,6 +379,10 @@ fn choice_control(
             row.options = dev::channel_options(devices, device, &v);
             row.value = v;
         }
+        ("display", "display") if dev::PICKED_IN_DIALOG => {
+            row.options = dev::picked_options(&v, "screen");
+            row.value = v;
+        }
         ("display" | "application", "display") => {
             row.options = dev::display_options(devices, &v);
             row.value = v;
@@ -420,6 +426,10 @@ fn choice_control(
             row.options = dev::exclude_options(devices, &excluded);
             row.value = String::new();
             row.refresh = true;
+        }
+        ("window", "app") if dev::PICKED_IN_DIALOG => {
+            row.options = dev::picked_options(&v, "window");
+            row.value = v;
         }
         ("window" | "application", "app") => {
             let none = devices.is_none_or(|d| d.windows.is_empty());
@@ -1056,6 +1066,9 @@ pub enum Outcome {
     Reshow,
     /// Nothing at all (cancelled, not a value it takes, devices asked for).
     Nothing,
+    /// Choose the screen or window in the desktop's sharing dialog
+    /// (`screen_pick`), then set what it returns.
+    Pick(ScreenPickKind),
 }
 
 /// The setting `key` changes when its control does `event`.
@@ -1071,6 +1084,13 @@ pub fn change(app: &Rc<App>, t: &Target, key: &str, event: FormEvent) -> Outcome
                 let Some((_, f)) = find(fields, key) else {
                     return Outcome::Nothing;
                 };
+                if chosen == dev::PICK {
+                    return Outcome::Pick(if f.name == "app" {
+                        ScreenPickKind::Window
+                    } else {
+                        ScreenPickKind::Display
+                    });
+                }
                 match (kind, f.name.as_str()) {
                     ("camera", "device") => camera_change(devices, value, &chosen),
                     ("microphone", "device") => microphone_change(devices, value, &chosen),

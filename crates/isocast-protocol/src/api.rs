@@ -51,6 +51,14 @@ pub enum Method {
     /// permissions. Returns
     /// [`Devices`](crate::devices::Devices).
     Devices,
+    /// Choose a screen or a window in the desktop's sharing dialog, for a
+    /// `display` or `window` source, where apps can't list the screens and
+    /// windows themselves (Linux). Waits up to 3 minutes for the choice.
+    /// Returns [`ScreenPicked`]: the value to give the source, which opens
+    /// the same screen or window without asking again while the desktop
+    /// remembers the choice. Refused where windows are listed instead
+    /// (macOS, Windows).
+    ScreenPick(ScreenPickParams),
     /// The live setup and its revision; with `resolved`, also where layout
     /// put every item. Returns [`Live`]. Its params are optional:
     /// `{"method": "get"}` asks for the setup alone.
@@ -3494,6 +3502,40 @@ pub struct SnapshotParams {
     /// if absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
+}
+
+/// What `screen_pick` asks the desktop for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenPickParams {
+    /// `window` (for a `window` source) or `display` (for a `display`
+    /// source).
+    pub kind: ScreenPickKind,
+}
+
+/// A window or a whole screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenPickKind {
+    Window,
+    Display,
+}
+
+/// What was chosen in the desktop's sharing dialog.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ScreenPicked {
+    /// The source setting to give `value`: `app` for a window, `display`
+    /// for a screen.
+    pub field: String,
+    /// `picked:` and an id, which names this choice.
+    pub value: String,
+    /// The size the desktop shares, in pixels; 0 if it didn't say.
+    pub width: u32,
+    pub height: u32,
+    /// Whether the desktop remembers the choice. If not, its dialog asks
+    /// again each time the source starts (on Hyprland, tick "Allow a
+    /// restore token" in it).
+    pub remembered: bool,
 }
 
 /// One frame of a source or a scene as a PNG.

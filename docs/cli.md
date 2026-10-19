@@ -125,6 +125,8 @@ the API and in MCP ([mcp-tools.md](mcp-tools.md)).
   - [`isocast canvas add`](#isocast-canvas-add)
   - [`isocast canvas set`](#isocast-canvas-set)
   - [`isocast canvas remove`](#isocast-canvas-remove)
+- [`isocast screen`](#isocast-screen)
+  - [`isocast screen pick`](#isocast-screen-pick)
 - [`isocast replay`](#isocast-replay)
   - [`isocast replay start`](#isocast-replay-start)
   - [`isocast replay stop`](#isocast-replay-stop)
@@ -207,6 +209,7 @@ Commands:
   apply          Make a change to the live setup, if it is still at --revision (from `plan` or `get`; 0 when there is no live setup yet)
   stream         Stream the program live over RTMP or RTMPS to the live setup's [stream] service, and keep its stream key in the Keychain
   canvas         Canvases besides the main one (#84): the vertical canvas and `[[canvases]]`, each with its own size, frame rate, scene (or the main one's), recording and stream destinations
+  screen         Choose screens and windows in the desktop's sharing dialog, where they can't be listed (Linux)
   replay         The replay buffer: keep the last seconds of the program in memory, and save them to a file on demand
   websocket      The obs-websocket v5 server, so OBS tools (Stream Deck, Touch Portal, Streamer.bot, scripts) drive Isocast. Off until enabled
   projector      Projectors: the program, the preview, a scene, a source or a multiview grid, full screen on a display or in a window (the app shows them)
@@ -2184,6 +2187,34 @@ Arguments:
 Options:
       --json  
   -h, --help  Print help
+```
+
+## isocast screen
+
+```text
+Choose screens and windows in the desktop's sharing dialog, where they can't be listed (Linux)
+
+Usage: isocast screen <COMMAND>
+
+Commands:
+  pick  Choose a window (or with --display, a screen) in the desktop's sharing dialog, and print the value to give a `window` source's `app` (a `display` source's `display`). That source then opens the same window without asking again while the desktop remembers the choice. Waits up to 3 minutes. Linux only: elsewhere `isocast devices` lists the windows
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+## isocast screen pick
+
+```text
+Choose a window (or with --display, a screen) in the desktop's sharing dialog, and print the value to give a `window` source's `app` (a `display` source's `display`). That source then opens the same window without asking again while the desktop remembers the choice. Waits up to 3 minutes. Linux only: elsewhere `isocast devices` lists the windows
+
+Usage: isocast screen pick [OPTIONS]
+
+Options:
+      --display  Choose a whole screen instead of a window
+      --json     Print the result as JSON
+  -h, --help     Print help
 ```
 
 ## isocast replay

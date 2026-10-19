@@ -16,6 +16,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use ashpd::desktop::PersistMode;
 use ashpd::desktop::screencast::{CursorMode, Screencast, SelectSourcesOptions, SourceType};
 use isocast_engine::{CaptureFormat, ScreenTarget, Time, VideoSink};
+use isocast_protocol::api::{ScreenPickKind, ScreenPicked};
 use pipewire as pw;
 use pw::spa;
 use pw::spa::pod::Pod;
@@ -66,6 +67,41 @@ fn save_token(key: &str, token: Option<&str>) {
 /// recording won't show the dialog again.
 pub fn remembered() -> bool {
     !tokens().is_empty()
+}
+
+/// What `screen_pick` gives a source: `picked:` and a new random id.
+fn new_pick() -> String {
+    use std::hash::BuildHasher;
+    let seed = (std::time::SystemTime::now(), std::process::id());
+    let id = std::collections::hash_map::RandomState::new().hash_one(seed);
+    format!("picked:{:012x}", id & 0xffff_ffff_ffff)
+}
+
+/// Show the sharing dialog for a window or a screen and keep the restore
+/// token under a new `picked:` value, which the source then gives as its
+/// `app` or `display`: each source keeps its own choice.
+pub fn pick(kind: ScreenPickKind) -> Result<ScreenPicked> {
+    let value = new_pick();
+    let (target, field) = match kind {
+        ScreenPickKind::Window => (
+            ScreenTarget::Window {
+                app: &value,
+                title: None,
+            },
+            "app",
+        ),
+        ScreenPickKind::Display => (ScreenTarget::Display(&value), "display"),
+    };
+    let opened = open(&target, true)?;
+    let (width, height) = opened.size.unwrap_or((0, 0));
+    opened.portal.close();
+    Ok(ScreenPicked {
+        field: field.into(),
+        remembered: tokens().contains_key(&key(&target)),
+        value,
+        width: width.max(0) as u32,
+        height: height.max(0) as u32,
+    })
 }
 
 /// The portal session, kept open while the capture runs.
