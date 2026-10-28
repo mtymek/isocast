@@ -11,8 +11,9 @@
 //! process's own surfaces where the decoder keeps it on the GPU, else an
 //! [`Incoming::Still`]. If this
 //! machine can't decode it, the engine's JPEG stills (`frame`), a few a
-//! second. A Linux window on its own engine does the same (no shared GPU
-//! surfaces there yet), without WebRTC: the engine plays its own sound.
+//! second. A Linux window on its own engine shows its shared DMA-BUFs when
+//! it can, and that video otherwise (without WebRTC: the engine plays its
+//! own sound): see [`Feed::fall_back`].
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -24,7 +25,41 @@ use slint::{Rgba8Pixel, SharedPixelBuffer};
 
 /// Whether this OS's engine shares its GPU surfaces with a local window
 /// (`shared_frames`); elsewhere a local window shows its `frames` video.
-const SHARED_SURFACES: bool = cfg!(any(target_os = "macos", windows));
+/// On Linux only while the window's GPU can show them, else the video
+/// ([`Feed::fall_back`]).
+const SHARED_SURFACES: bool = cfg!(any(target_os = "macos", windows, target_os = "linux"));
+
+/// Linux's shared surfaces can't be shown here, and asking again won't
+/// change that: the engine couldn't make or hand over DMA-BUFs, or this
+/// window's GPU couldn't import them (another GPU, no DMA-BUF import).
+/// The feed shows the engine's H.264 instead, as before Linux shared them.
+#[derive(Debug)]
+struct NotShared(String);
+
+impl std::fmt::Display for NotShared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotShared {}
+
+/// Whether a Linux stream's `error` means shared frames don't work here:
+/// the window couldn't show one ([`NotShared`]), the engine refuses them or
+/// doesn't know them, or anything else kept a stream of the engine
+/// (`connected`) from its first picture (it couldn't make, hand over or
+/// draw DMA-BUFs). Not a lost connection after pictures came, nor the
+/// engine failing the request itself (an unknown target), which the video
+/// would hit as well: those are retried.
+fn not_shared(error: &anyhow::Error, connected: bool, pictured: bool) -> bool {
+    if error.is::<NotShared>() {
+        return true;
+    }
+    let refused = error
+        .downcast_ref::<isocast_client::DaemonError>()
+        .map(|e| matches!(e.code(), RpcError::UNSUPPORTED | RpcError::METHOD_NOT_FOUND));
+    connected && !pictured && refused.unwrap_or(true)
+}
 
 /// The most stills a second a remote window asks for (R2's interim
 /// previews: a few, at about 0.1 MB each on the network).
@@ -242,6 +277,9 @@ pub struct Feed {
     /// Another computer's engine: the monitor shows decoded pictures'
     /// surfaces in place (native layers), so they needn't come as pixels.
     surfaces: Arc<std::sync::atomic::AtomicBool>,
+    /// Linux: why the window couldn't show a shared frame; the feed takes
+    /// the engine's H.264 from then on.
+    unshowable: Arc<Mutex<Option<String>>>,
 }
 
 impl Feed {
@@ -266,6 +304,7 @@ impl Feed {
             sound: Arc::default(),
             retry: Arc::default(),
             surfaces: Arc::default(),
+            unshowable: Arc::default(),
         };
         let thread_feed = feed.clone();
         thread::Builder::new()
@@ -295,6 +334,18 @@ impl Feed {
     /// [`crate::video::Decoder::decode`]); else pixels. Off at first.
     pub fn set_surfaces(&self, on: bool) {
         self.surfaces.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The window couldn't show a shared frame (`why`): on Linux the feed
+    /// shows the engine's H.264 instead from now on. (Elsewhere it keeps
+    /// the shared frames; the failure is only logged.)
+    pub fn fall_back(&self, why: &anyhow::Error) {
+        if cfg!(target_os = "linux") {
+            self.unshowable
+                .lock()
+                .unwrap()
+                .get_or_insert_with(|| format!("{why:#}"));
+        }
     }
 
     /// Offer WebRTC again now if the feed fell back to `frames`.
@@ -339,6 +390,11 @@ impl Feed {
         if !crate::engine::is_local() || !SHARED_SURFACES {
             return self.receive_video(deliver);
         }
+        // Linux: a window drawn on the CPU can't show GPU textures.
+        if cfg!(target_os = "linux") && crate::window::cpu_window() {
+            isocast_diagnostics::diagnostic!("info"; "preview: the window draws on the CPU; showing the engine's H.264");
+            return self.receive_video(deliver);
+        }
         let mut delay = Duration::from_millis(250);
         loop {
             let want = self.want.lock().unwrap().clone();
@@ -349,7 +405,12 @@ impl Feed {
                 thread::sleep(Duration::from_millis(50));
                 continue;
             };
-            let stream = crate::daemon::connect().and_then(|client| {
+            let client = crate::daemon::connect();
+            // Reached the engine: on Linux anything that keeps this stream
+            // from its first picture means shared frames don't work here.
+            let connected = client.is_ok();
+            let mut pictured = false;
+            let stream = client.and_then(|client| {
                 client.shared_frames(SharedFramesParams {
                     target: target.clone(),
                     max_width: Some(want.width.max(16)),
@@ -370,12 +431,19 @@ impl Feed {
                 }
                 delay = Duration::from_millis(250);
                 loop {
+                    if let Some(why) = self.unshowable.lock().unwrap().clone() {
+                        return Err(NotShared(why).into());
+                    }
                     if self.want.lock().unwrap().target.as_deref() != Some(target.as_str()) {
                         return Ok(());
                     }
                     // The newest frame: older ones that arrived meanwhile
                     // go straight back to the daemon.
                     if let Some(frame) = frames.newest(Some(Duration::from_millis(250)))? {
+                        if !pictured && cfg!(target_os = "linux") {
+                            isocast_diagnostics::diagnostic!("info"; "preview: {target} {}x{} through shared DMA-BUF surfaces", frame.width(), frame.height());
+                        }
+                        pictured = true;
                         deliver(Incoming::Frame(frame));
                     }
                 }
@@ -384,6 +452,16 @@ impl Feed {
             match result {
                 // The target changed: the new one at once.
                 Ok(()) => continue,
+                // Linux: the engine couldn't share its pictures, or this
+                // window couldn't show them: its H.264 video, as before
+                // Linux shared them. (A lost connection after pictures came
+                // is retried below, for the daemon's next stream.)
+                Err(error)
+                    if cfg!(target_os = "linux") && not_shared(&error, connected, pictured) =>
+                {
+                    isocast_diagnostics::diagnostic!("info"; "preview: no shared frames ({error:#}); showing the engine's H.264");
+                    return self.receive_video(deliver);
+                }
                 Err(error) if unsupported(&error) => {
                     deliver(Incoming::Unavailable(format!("{error:#}")));
                     // Wait for another target (or the end) instead of

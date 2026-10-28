@@ -170,7 +170,7 @@ Commands:
   logs         Read structured logs (also works when the daemon is stopped)
   hotkeys      Customize profile hotkeys, including global keys and push-to-talk
   encoders     List recording codecs and the containers each supports
-  gpu-adapter  Show the daemon's graphics adapter identity (Windows DX12 LUID)
+  gpu-adapter  Show the daemon's graphics adapter identity (Windows DX12 LUID, Linux Vulkan PCI ids)
   setup        Work with setup files
   collection   Scene collections, as in OBS: named sets of scenes, sources, transitions and the canvas size, swapped as a whole. The one in use is the live setup's (with the profile in use)
   profile      Profiles, as in OBS: named frame rate, recording, stream and audio settings, swapped as a whole. The one in use is the live setup's (with the scene collection in use)
@@ -545,7 +545,7 @@ Options:
 ## isocast gpu-adapter
 
 ```text
-Show the daemon's graphics adapter identity (Windows DX12 LUID)
+Show the daemon's graphics adapter identity (Windows DX12 LUID, Linux Vulkan PCI ids)
 
 Usage: isocast gpu-adapter [OPTIONS]
 

@@ -79,6 +79,16 @@ pub fn run(options: Options) -> Result<ExitCode> {
         client
     };
     let mut frames = client.shared_frames(params)?;
+    // The engine's clock now, as of its reply: frames are timed on it.
+    // (A Linux engine counts from its own start; elsewhere it's the host's.)
+    let (engine_time, connected) = (frames.info().host_time, Instant::now());
+    let engine_now = || {
+        if cfg!(target_os = "linux") {
+            engine_time + connected.elapsed().as_nanos() as u64
+        } else {
+            isocast_surfaces::host_now()
+        }
+    };
     let gpu = if options.check {
         Some(Gpu::new().context("this process could not open the GPU to read frames back")?)
     } else {
@@ -110,7 +120,7 @@ pub fn run(options: Options) -> Result<ExitCode> {
             }
         };
         let at = started.elapsed().as_secs_f64();
-        stats.frame(&frame, at);
+        stats.frame(&frame, at, engine_now());
         if let Some(gpu) = &gpu {
             let points = grid_points(frame.width(), frame.height(), &expected);
             let texture = frame.texture(&gpu.device)?;
@@ -164,14 +174,13 @@ struct Stats {
 }
 
 impl Stats {
-    fn frame(&mut self, frame: &SharedFrame, at: f64) {
+    fn frame(&mut self, frame: &SharedFrame, at: f64, now: u64) {
         self.count += 1;
         self.first.get_or_insert(at);
         if let Some(last) = self.last {
             self.intervals.push((at - last) * 1000.0);
         }
         self.last = Some(at);
-        let now = isocast_surfaces::host_now();
         self.lags.push(now.saturating_sub(frame.time) as f64 / 1e6);
         let (generation, _) = frame.slot();
         if self.rings.last().is_none_or(|ring| ring.0 != generation) {

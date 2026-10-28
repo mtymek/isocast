@@ -288,7 +288,7 @@ Whether Isocast is idle or recording, with live frame and drop counters, the fil
 
 ## gpu_adapter
 
-Select/return the daemon's graphics adapter without starting capture: Windows DX12 LUID [low, high], or null on other platforms. Shared-preview clients must use this adapter.
+Select/return the daemon's graphics adapter without starting capture: Windows DX12 LUID [low, high], Linux Vulkan PCI ids [vendor, device], or null on other platforms. Shared-preview clients must use this adapter.
 
 ## hotkeys_actions
 

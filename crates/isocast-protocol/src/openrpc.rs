@@ -444,7 +444,8 @@ pub fn result(method: &str, g: &mut SchemaGenerator) -> Option<(String, Schema)>
         "machine_profile" | "machine_calibrate" | "machine_cancel" => {
             of::<machine::MachineStatus>(g)
         }
-        // Windows: the DX12 adapter LUID as [low, high]; null elsewhere.
+        // Windows: the DX12 adapter LUID as [low, high]; Linux: the Vulkan
+        // adapter's PCI [vendor, device] ids; null elsewhere.
         "gpu_adapter" => of::<Option<(u32, i32)>>(g),
         "hello" => of::<hello::Hello>(g),
         "folder_roots" | "folder_roots_set" => of::<roots::FolderRoots>(g),
