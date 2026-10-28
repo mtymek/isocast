@@ -4378,7 +4378,9 @@ name = "isocast-surfaces"
 version = "0.0.9"
 dependencies = [
  "anyhow",
+ "ash",
  "isocast-ipc",
+ "libc",
  "mach2",
  "objc2-core-foundation",
  "objc2-io-surface",

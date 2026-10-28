@@ -26769,7 +26769,7 @@
       "summary": "Cancel calibration, retaining the last valid profile."
     },
     {
-      "description": "Select/return the daemon's graphics adapter before opening a client\nrenderer. Windows returns its DX12 LUID as [low: u32, high: i32];\nother platforms return null. Does not start capture or recording.",
+      "description": "Select/return the daemon's graphics adapter before opening a client\nrenderer. Windows returns its DX12 LUID as [low: u32, high: i32];\nLinux its Vulkan adapter's PCI ids as [vendor, device]; other\nplatforms return null. Does not start capture or recording.",
       "name": "gpu_adapter",
       "paramStructure": "by-name",
       "params": [],

@@ -15,7 +15,8 @@ isocast-engine = { path = "../isocast-engine" }
 isocast-diagnostics = { path = "../isocast-diagnostics" }
 isocast-protocol = { path = "../isocast-protocol" }
 isocast-platform-credentials = { path = "../isocast-platform-credentials" }
-isocast-surfaces = { path = "../isocast-surfaces" }
+# `wgpu`: shared surfaces are DMA-BUFs the engine draws into on its GPU.
+isocast-surfaces = { path = "../isocast-surfaces", features = ["wgpu"] }
 isocast-mux = { path = "../isocast-mux" }
 libc = "0.2"
 # MIT portal and PipeWire bindings; native PipeWire is MIT.

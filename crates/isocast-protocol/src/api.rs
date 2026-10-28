@@ -484,7 +484,8 @@ pub enum Method {
     MachineCancel,
     /// Select/return the daemon's graphics adapter before opening a client
     /// renderer. Windows returns its DX12 LUID as [low: u32, high: i32];
-    /// other platforms return null. Does not start capture or recording.
+    /// Linux its Vulkan adapter's PCI ids as [vendor, device]; other
+    /// platforms return null. Does not start capture or recording.
     GpuAdapter,
     /// What this engine is: its machine's operating system and name, its
     /// identity, build, protocol version and methods. Remote clients call

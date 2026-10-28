@@ -87,6 +87,37 @@ pub fn local_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter> {
     isocast_surfaces::dx12_adapter(instance, None)
 }
 
+/// Linux: the Vulkan adapter the daemon draws shared frames on (its PCI ids
+/// from `gpu_adapter`), to open before constructing a renderer that shows
+/// them in place. `None` when the daemon doesn't name one (an older engine)
+/// or this process sees no such adapter: the caller then picks its own, and
+/// its imports of the daemon's surfaces are refused (they carry the GPU's
+/// UUID), so it shows H.264 instead.
+#[cfg(all(target_os = "linux", feature = "wgpu"))]
+pub fn adapter(client: &mut Client, instance: &wgpu::Instance) -> Result<Option<wgpu::Adapter>> {
+    use isocast_protocol::api::RpcError;
+
+    let ids = match client.call::<Option<(u32, i32)>>(Method::GpuAdapter) {
+        Ok(ids) => ids,
+        Err(error)
+            if error
+                .downcast_ref::<crate::DaemonError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.code(),
+                        RpcError::METHOD_NOT_FOUND | RpcError::UNSUPPORTED
+                    )
+                }) =>
+        {
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    Ok(ids.and_then(|(vendor, device)| {
+        isocast_surfaces::vulkan_adapter(instance, (vendor, device as u32))
+    }))
+}
+
 /// Register the actual rendering queue before receiving Windows previews.
 /// Slint/Skia and the app must submit through this same queue. A frame must
 /// remain alive until no future render will reference its image; its drop

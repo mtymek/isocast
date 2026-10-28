@@ -60,6 +60,13 @@ impl Platform for LinuxPlatform {
             width, height, fps,
         )?))
     }
+    /// The engine GPU's PCI vendor and device ids: clients open the same
+    /// adapter to show its shared surfaces. (Opens the process's shared GPU;
+    /// Linux gives its completion thread no special scheduling.)
+    fn gpu_adapter_luid(&self) -> Result<Option<(u32, i32)>> {
+        let gpu = isocast_surfaces::vulkan_gpu(&Gpu::new()?.device)?;
+        Ok(Some((gpu.vendor, gpu.device as i32)))
+    }
     fn now(&self) -> Time {
         system::now()
     }
@@ -310,13 +317,17 @@ impl Platform for LinuxPlatform {
     fn frame_is_ycbcr(&self, _frame: &Frame) -> bool {
         false
     }
+    /// A DMA-BUF on the engine's GPU, drawn into through its own import
+    /// (as on Windows); clients on the same GPU show it in place.
     fn shared_surface(
         &self,
-        _gpu: &Gpu,
-        _width: u32,
-        _height: u32,
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
     ) -> Result<(Self::SharedSurface, wgpu::Texture)> {
-        Err(unsupported("shared GPU surfaces"))
+        let surface = isocast_surfaces::Surface::rgba_on(&gpu.device, width, height)?;
+        let texture = surface.texture(&gpu.device, wgpu::TextureUsages::RENDER_ATTACHMENT)?;
+        Ok((surface, texture))
     }
     fn encode_jpeg(
         &self,

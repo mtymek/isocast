@@ -40,14 +40,24 @@ impl Gpu {
             isocast_client::shared::local_adapter(&instance)
                 .context("could not select a graphics adapter")?
         };
-        #[cfg(not(windows))]
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            ..Default::default()
-        }))
-        .context("no GPU found")?;
+        // Linux: the daemon's adapter when it names one here, so its shared
+        // frames (DMA-BUFs) import in place; else this app's own choice, and
+        // the previews come as H.264 (frames.rs).
+        #[cfg(target_os = "linux")]
+        let adapter = match crate::engine::is_local()
+            .then(|| engine_adapter(&instance))
+            .flatten()
+        {
+            Some(adapter) => adapter,
+            None => own_adapter(&instance)?,
+        };
+        #[cfg(not(any(windows, target_os = "linux")))]
+        let adapter = own_adapter(&instance)?;
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("isocast-ui"),
+            // Linux: the daemon's shared frames are DMA-BUFs this imports.
+            #[cfg(target_os = "linux")]
+            required_features: adapter.features() & wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF,
             // Preview textures are shared with the daemon. The UI's own small
             // allocations do not need DX12's default 128 MiB heap blocks.
             #[cfg(windows)]
@@ -77,6 +87,38 @@ impl Gpu {
             adapter: self.adapter.clone(),
             device: self.device.clone(),
             queue: self.queue.clone(),
+        }
+    }
+}
+
+/// The app's own choice of adapter.
+#[cfg(not(windows))]
+fn own_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter> {
+    block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        ..Default::default()
+    }))
+    .context("no GPU found")
+}
+
+/// The adapter this machine's engine draws on (`gpu_adapter`), if it says
+/// and this process sees it.
+#[cfg(target_os = "linux")]
+fn engine_adapter(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
+    let chosen = crate::daemon::connect()
+        .and_then(|mut client| isocast_client::shared::adapter(&mut client, instance));
+    match chosen {
+        Ok(Some(adapter)) => {
+            isocast_diagnostics::diagnostic!("info"; "GPU: the engine's, {}", adapter.get_info().name);
+            Some(adapter)
+        }
+        Ok(None) => {
+            isocast_diagnostics::diagnostic!("info"; "GPU: the engine's adapter isn't available here; previews come as H.264");
+            None
+        }
+        Err(error) => {
+            isocast_diagnostics::diagnostic!("warn"; "GPU: couldn't ask the engine for its adapter ({error:#}); previews may come as H.264");
+            None
         }
     }
 }

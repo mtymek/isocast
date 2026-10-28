@@ -1233,6 +1233,10 @@ impl Projectors {
                             isocast_diagnostics::diagnostic!("warn";
                                 "projector: can't show a shared frame: {error:#}"
                             );
+                            // Linux: the engine's H.264 instead from now on.
+                            if let Some(feed) = &tile.feed {
+                                feed.fall_back(&error);
+                            }
                             continue;
                         }
                     }

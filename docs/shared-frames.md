@@ -264,3 +264,21 @@ reuse recording surfaces. Per-process bounds are 128 retained allocations,
 an estimated 512 MiB, 32 fetch workers and 256 retirement jobs. Closing the
 stream shuts down its pipe even when images remain retained. UI image-cache
 keys are unique across stream reconnects, not just wire generation numbers.
+
+## Linux
+
+`dmabuf-socket` uses the same ring/frame/release protocol. Each slot is a
+linear RGBA8 Vulkan image on the daemon's GPU, exported as a DMA-BUF
+(`Surface::rgba_on`); the daemon draws into its own import of it, as on
+Windows. A ring's descriptors travel once, with `SCM_RIGHTS`, from the
+socket `$XDG_RUNTIME_DIR/isocast/surfaces-<pid>.sock` (mode 0600; the
+daemon also checks the peer's uid with `SO_PEERCRED`); a token works once.
+Each surface carries its Vulkan device UUID, and `Surface::texture`
+refuses a device with another one: there is no cross-GPU or CPU fallback
+in the transport. Both devices request `VULKAN_EXTERNAL_MEMORY_DMA_BUF`.
+
+`gpu_adapter` returns the daemon's PCI `[vendor, device]` ids, and the app
+opens that Vulkan adapter (`isocast_client::shared::adapter`). The app
+shows the engine's H.264 (`frames`) instead when the window draws on the
+CPU, when the engine can't make or hand over DMA-BUFs, or when its GPU
+can't import one (another GPU, no DMA-BUF import).

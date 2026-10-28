@@ -77,8 +77,14 @@ impl Gpu {
         isocast_diagnostics::diagnostic!("info"; "graphics adapter: {} ({:?})", info.name, info.device_type);
         // 10-bit frames arrive as 16-bit planes; native Windows cameras use
         // genuine NV12 allocations with two aspect views of one texture.
-        let required_features = adapter.features()
-            & (wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12);
+        // Linux's shared surfaces are DMA-BUFs: made and drawn into here
+        // through Vulkan's import, where the GPU can.
+        let mut wanted =
+            wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::TEXTURE_FORMAT_NV12;
+        if cfg!(target_os = "linux") {
+            wanted |= wgpu::Features::VULKAN_EXTERNAL_MEMORY_DMA_BUF;
+        }
+        let required_features = adapter.features() & wanted;
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("isocast"),
             required_features,

@@ -911,6 +911,8 @@ impl Preview {
                         isocast_diagnostics::diagnostic!("warn";
                             "preview: can't show a shared frame: {error:#}"
                         );
+                        // Linux: the engine's H.264 instead from now on.
+                        self.feed.fall_back(&error);
                         return false;
                     }
                 }

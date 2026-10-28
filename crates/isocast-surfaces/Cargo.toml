@@ -4,12 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "GPU surfaces isocastd shares with its clients without copying (IOSurfaces handed over Mach on macOS)."
+description = "GPU surfaces isocastd shares with its clients without copying (IOSurfaces handed over Mach on macOS, DMA-BUFs over a socket on Linux)."
 
 [features]
 # Wrap surfaces as wgpu textures (the daemon draws into them; clients like
 # the app show them).
-wgpu = ["dep:wgpu"]
+wgpu = ["dep:wgpu", "dep:ash"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -32,3 +32,10 @@ mach2 = "0.6.0"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFBase", "CFDictionary", "CFNumber", "CFString"] }
 objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef", "IOSurfaceTypes", "libc", "objc2-core-foundation"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLPixelFormat", "MTLResource", "MTLTexture", "objc2-io-surface"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# SCM_RIGHTS, SO_PEERCRED (src/linux.rs).
+libc = "0.2"
+# Exportable Vulkan images and device UUIDs, at wgpu-hal 30's version.
+ash = { version = "0.38", default-features = false, optional = true }
+wgpu = { version = "=30.0.1", default-features = false, features = ["vulkan"], optional = true }

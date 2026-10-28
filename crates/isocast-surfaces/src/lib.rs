@@ -15,6 +15,11 @@
 //! authenticated named pipes. The client checks the adapter and acknowledges
 //! a frame only after its rendering queue's fence completes.
 //!
+//! On Linux a surface is a DMA-BUF in the daemon's GPU memory, handed over
+//! with `SCM_RIGHTS` on a same-user socket of the daemon's own
+//! (`linux.rs`). The client must import it on the same GPU: surfaces carry
+//! their Vulkan device UUID, and a mismatch is refused.
+//!
 //! On other systems everything here returns an error saying so.
 
 use std::fmt;
@@ -34,17 +39,26 @@ pub use windows::{check_render_queue, dx12_adapter, dx12_adapter_luid};
 #[cfg(all(windows, feature = "wgpu"))]
 pub use windows::{retire, retirement_failed};
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{Exporter, Surface, fetch, host_now};
+#[cfg(all(target_os = "linux", feature = "wgpu"))]
+pub use linux::{VulkanGpu, vulkan_adapter, vulkan_gpu};
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod other;
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub use other::{Exporter, Surface, fetch, host_now};
 
 #[cfg(target_os = "macos")]
 pub const TRANSPORT: &str = "iosurface-mach";
 #[cfg(windows)]
 pub const TRANSPORT: &str = "d3d12-named-pipe";
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+pub const TRANSPORT: &str = "dmabuf-socket";
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub const TRANSPORT: &str = "unsupported";
 
 /// The most surfaces a ring may have.

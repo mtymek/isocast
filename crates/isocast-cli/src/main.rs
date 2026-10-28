@@ -39,17 +39,17 @@ mod record;
 mod remote;
 mod replay;
 mod roots;
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod shared_frames;
 mod virtual_camera;
 mod websocket;
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 fn shared_frames(options: shared_frames::Options) -> Result<ExitCode> {
     shared_frames::run(options)
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod shared_frames {
     #[expect(
         dead_code,
@@ -70,9 +70,9 @@ mod shared_frames {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn shared_frames(_options: shared_frames::Options) -> Result<ExitCode> {
-    bail!("--shared is available on macOS and Windows; leave it out to watch H.264")
+    bail!("--shared is available on macOS, Windows and Linux; leave it out to watch H.264")
 }
 
 /// Isocast: scene-based recording with per-source ISO files, controlled from
@@ -175,7 +175,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show the daemon's graphics adapter identity (Windows DX12 LUID).
+    /// Show the daemon's graphics adapter identity (Windows DX12 LUID, Linux
+    /// Vulkan PCI ids).
     GpuAdapter {
         /// Print JSON.
         #[arg(long)]
@@ -1621,6 +1622,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let luid: Option<(u32, i32)> = Client::connect_or_launch()?.call(Method::GpuAdapter)?;
             if json {
                 println!("{}", serde_json::to_string(&luid)?);
+            } else if let Some((vendor, device)) = luid
+                && cfg!(target_os = "linux")
+            {
+                println!("Vulkan adapter PCI ids: vendor {vendor:#06x}, device {device:#06x}");
             } else if let Some((low, high)) = luid {
                 println!("DX12 adapter LUID: {low}, {high}");
             } else {

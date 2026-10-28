@@ -1650,7 +1650,7 @@ impl Isocast {
     }
 
     #[tool(
-        description = "Select/return the daemon's graphics adapter without starting capture: Windows DX12 LUID [low, high], or null on other platforms. Shared-preview clients must use this adapter.",
+        description = "Select/return the daemon's graphics adapter without starting capture: Windows DX12 LUID [low, high], Linux Vulkan PCI ids [vendor, device], or null on other platforms. Shared-preview clients must use this adapter.",
         annotations(read_only_hint = true)
     )]
     async fn gpu_adapter(&self) -> Result<Json<Option<(u32, i32)>>, String> {
