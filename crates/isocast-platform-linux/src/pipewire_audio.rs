@@ -26,6 +26,7 @@ use pw::spa::pod::Pod;
 use pw::{spa, stream::StreamState};
 
 use crate::pw_loop::WorkerLoop;
+use crate::usb_setup;
 
 const RATE: u32 = 48_000;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -164,6 +165,8 @@ struct Device {
     channels: u32,
     rate: u32,
     position: Option<[u32; spa::param::audio::MAX_CHANNELS]>,
+    /// The ALSA card behind a hardware node (its USB device: usb_setup).
+    alsa_card: Option<u32>,
 }
 
 impl Device {
@@ -186,6 +189,12 @@ impl Device {
         }
         if let Some(rate) = props.get("audio.rate").and_then(|v| v.parse().ok()) {
             self.rate = rate;
+        }
+        if let Some(card) = ["api.alsa.pcm.card", "alsa.card"]
+            .into_iter()
+            .find_map(|key| props.get(key)?.parse().ok())
+        {
+            self.alsa_card = Some(card);
         }
     }
 }
@@ -1251,6 +1260,13 @@ fn capture_worker(
         // With no target.object the session manager selects the default sink.
         props.insert("stream.capture.sink", "true");
     }
+    // Until the first buffer (the device opened and running), nothing else may
+    // set up on this USB device (a webcam's own camera): see usb_setup.
+    let mut setup = Some(usb_setup::begin(
+        target
+            .and_then(|node| node.alsa_card)
+            .and_then(usb_setup::sound_card_device),
+    ));
     let deadline = Instant::now() + TIMEOUT;
     let mainloop = WorkerLoop::new()?;
     let context = capture_context(&mainloop, version)?;
@@ -1463,6 +1479,7 @@ fn capture_worker(
                     .send(Ok(count))
                     .context("PipeWire startup caller disconnected")?;
                 *started = true;
+                drop(setup.take());
                 check_realtime = Some(Instant::now());
             } else {
                 ensure!(
