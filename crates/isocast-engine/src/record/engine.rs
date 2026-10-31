@@ -240,6 +240,26 @@ impl<F: Clone> Routes<F> {
         self.audio_to(samples, pts, Some(false));
     }
 
+    /// Tell every recording of the program mix that a source lost audio
+    /// at `pts` and the mix filled it with silence, so the file counts a
+    /// dropout. Live outputs report their own losses.
+    pub(super) fn audio_gap(&self, pts: Time) {
+        for route in self.list.lock().iter() {
+            if !route.recording_audio || pts < route.from {
+                continue;
+            }
+            let packet = Packet::AudioGap {
+                track: route.track,
+                pts,
+            };
+            if let (Err(TrySendError::Full(_)), Some(missed)) =
+                (route.output.try_send(packet), &route.missed)
+            {
+                missed.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
     fn audio_to(&self, samples: &Arc<[f32]>, pts: Time, recording: Option<bool>) -> bool {
         let mut live = false;
         for route in self.list.lock().iter_mut() {
@@ -2680,6 +2700,7 @@ fn ensure_mixer<P: Platform>(inner: &Arc<Inner<P>>, state: &mut State<P>) {
             .map(|(id, channels, _)| (id.clone(), *channels, settings(id)))
             .collect();
         let mut mixer = Mixer::new(mixed, setup.audio.pan_law, rx, inner.program_meter.clone());
+        mixer.set_sparse(|id| super::file::AudioTiming::new(setup.source(id)).sparse);
         for (id, channels, _) in wanted.iter().filter(|(_, _, mixed)| !*mixed) {
             mixer.add_key(id.clone(), *channels, settings(id));
         }
@@ -5625,6 +5646,25 @@ mod tests {
     }
 
     #[test]
+    fn program_audio_gaps_reach_recordings_only() {
+        let routes: Routes<u32> = Routes::default();
+        let (recording, recorded) = sync_channel(2);
+        let (later, later_rx) = sync_channel(2);
+        let (stream, streamed) = sync_channel(2);
+        routes.add_recording_audio(recording, 1, Time::from_nanos(0));
+        routes.add_recording_audio(later, 0, Time::from_nanos(2_000));
+        routes.add(stream, 0, Time::from_nanos(0), None);
+        routes.audio_gap(Time::from_nanos(1_000));
+        assert!(matches!(
+            recorded.try_recv(),
+            Ok(Packet::AudioGap { track: 1, pts }) if pts == Time::from_nanos(1_000)
+        ));
+        // A recording that starts after the gap, and a live tap, get nothing.
+        assert!(later_rx.try_recv().is_err());
+        assert!(streamed.try_recv().is_err());
+    }
+
+    #[test]
     fn frames_an_output_misses_are_counted() {
         let routes: Routes<u32> = Routes::default();
         let (tx, rx) = sync_channel(2);
@@ -5709,6 +5749,7 @@ mod tests {
                 Ok(Packet::Video { pts, .. }) => video.push(pts.as_nanos()),
                 Ok(Packet::Audio { .. }) => audio += 1,
                 Ok(Packet::Skipped { .. }) => panic!("live taps never receive ISO skipped ticks"),
+                Ok(Packet::AudioGap { .. }) => panic!("live taps never receive program audio gaps"),
                 Err(RecvTimeoutError::Disconnected) => break,
                 Err(RecvTimeoutError::Timeout) => panic!("every sender was removed"),
             }

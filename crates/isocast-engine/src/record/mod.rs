@@ -998,6 +998,13 @@ pub enum Packet<F> {
     Skipped {
         pts: Time,
     },
+    /// Audio a source lost at `pts` that the program mix on `track` filled
+    /// with silence (see [`mix::Mixer::run`]): the file counts a dropout.
+    /// Only recordings receive it.
+    AudioGap {
+        track: usize,
+        pts: Time,
+    },
 }
 
 /// What the session's opened sources deliver: video size and rate, and

@@ -348,6 +348,23 @@ pub(super) fn write_files<W: FileWriter>(
                         };
                         (result, pts)
                     }
+                    // The program mix filled lost audio with silence: one
+                    // dropout, in the file whose span holds it.
+                    Packet::AudioGap { track, pts } => {
+                        match (&mut closing, &mut next) {
+                            (Some(c), _) if pts < c.at => {
+                                c.file.audio_gap(track, pts, c.at.min(end))
+                            }
+                            (_, Some((at, .., new))) if pts >= *at => {
+                                new.audio_gap(track, pts, end)
+                            }
+                            _ => {
+                                let until = next.as_ref().map_or(end, |(at, ..)| end.min(*at));
+                                file.audio_gap(track, pts, until)
+                            }
+                        }
+                        (Ok(()), pts)
+                    }
                 };
                 // From when ISO admission must hand over every picture: a
                 // file starts on its first one, so any tick while it hasn't,
@@ -491,6 +508,9 @@ struct OpenFile<W: FileWriter> {
     start: Option<Time>,
     /// Audio that arrived before the first frame.
     pending_audio: Vec<(usize, Arc<[f32]>, Time)>,
+    /// Program mix gaps (track, mapped time) from before the first frame,
+    /// counted once the file starts if they fall within it.
+    pending_gaps: Vec<(usize, Time)>,
     frames: u64,
     /// Times of the latest frames written, to uncount any that the final end
     /// time (set a moment after they arrived) cuts off.
@@ -545,6 +565,7 @@ impl<W: FileWriter> OpenFile<W> {
             tracks,
             start: None,
             pending_audio: Vec::new(),
+            pending_gaps: Vec::new(),
             frames: 0,
             recent: VecDeque::new(),
             last_video: None,
@@ -613,6 +634,9 @@ impl<W: FileWriter> OpenFile<W> {
             let end = file_end(pts, end, self.fps());
             for (track, samples, at) in std::mem::take(&mut self.pending_audio) {
                 self.tracks[track].append(&mut self.writer, track, &samples, at, pts, end)?;
+            }
+            for (track, at) in std::mem::take(&mut self.pending_gaps) {
+                self.gap_mapped(track, at, end);
             }
         }
         let submit = crate::trace::on().then(std::time::Instant::now);
@@ -708,6 +732,36 @@ impl<W: FileWriter> OpenFile<W> {
         let end = file_end(start, end, self.fps());
         self.tracks[track].append(&mut self.writer, track, samples, pts, start, end)?;
         Ok(())
+    }
+
+    /// Count a dropout on `track` for audio the program mix lost at `pts`
+    /// and filled with silence, if that lies in the file: not in a pause,
+    /// not before its first frame, not at or after `end`.
+    fn audio_gap(&mut self, track: usize, pts: Time, end: Time) {
+        let cuts = self.clock.state.read();
+        if cuts.paused(pts) {
+            return;
+        }
+        let (pts, end) = (cuts.map(pts), cuts.map(end));
+        drop(cuts);
+        match self.start {
+            Some(start) => self.gap_mapped(track, pts, file_end(start, end, self.fps())),
+            None => {
+                if self.pending_gaps.len() == MAX_PENDING_AUDIO {
+                    self.pending_gaps.remove(0);
+                }
+                self.pending_gaps.push((track, pts));
+            }
+        }
+    }
+
+    fn gap_mapped(&mut self, track: usize, pts: Time, end: Time) {
+        if self.start.is_some_and(|start| pts >= start)
+            && pts < end
+            && let Some(track) = self.tracks.get_mut(track)
+        {
+            track.dropouts += 1;
+        }
     }
 
     /// Finish the file at `end` (rounded up to a frame boundary); with
@@ -1181,6 +1235,39 @@ mod tests {
             60,
         );
         assert_eq!(end, ZERO.add_ticks(11, 60));
+    }
+
+    /// #160: audio the program mix lost counts once, in the file whose
+    /// span holds it: not before its first picture, not in a pause, not
+    /// past its end. A gap reported before the first picture is held.
+    #[test]
+    fn program_mix_gaps_count_as_dropouts_within_the_file() {
+        let epoch = Time::from_nanos(1_000_000_000);
+        let tick = |n| epoch.add_ticks(n, 30);
+        let mut program = Arc::into_inner(plan(isocast_protocol::PROGRAM, epoch)).unwrap();
+        program.audio = vec![isocast_protocol::PROGRAM.into()];
+        program.audio_timing = vec![AudioTiming::new(None)];
+        program.spec.audio = vec![crate::AudioTrackSpec { channels: 2 }];
+        let clock = Arc::new(RecordingClock::new(epoch, [30].into_iter()));
+        let mut file = OpenFile::new(Count::default(), Arc::new(program), clock.clone());
+        let end = tick(120);
+        // Reported before the first picture (tick 2): one before it, one in it.
+        file.audio_gap(0, tick(1), end);
+        file.audio_gap(0, tick(3), end);
+        for n in 2..30 {
+            file.video(Some(&()), tick(n), end).unwrap();
+        }
+        file.audio_gap(0, tick(20), end);
+        let paused = clock.change(true, tick(30), None).unwrap();
+        let resumed = clock.change(false, tick(60), None).unwrap();
+        file.audio_gap(0, paused + std::time::Duration::from_millis(10), end);
+        file.audio_gap(0, resumed + std::time::Duration::from_millis(10), end);
+        file.audio_gap(0, end, end);
+        for n in 30..120 {
+            file.video(Some(&()), tick(n), end).unwrap();
+        }
+        let report = file.finish(end, Ok(())).unwrap();
+        assert_eq!(report.audio_dropouts, 3);
     }
 
     /// #150: a file whose first picture came 4 ticks into a 60-tick take.
