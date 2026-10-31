@@ -2951,6 +2951,7 @@ fn ensure_mixer<P: Platform>(inner: &Arc<Inner<P>>, state: &mut State<P>) {
             .map(|(id, channels, _)| (id.clone(), *channels, settings(id)))
             .collect();
         let mut mixer = Mixer::new(mixed, setup.audio.pan_law, rx, inner.program_meter.clone());
+        mixer.set_sparse(|id| super::file::AudioTiming::new(setup.source(id)).sparse);
         for (id, channels, _) in wanted.iter().filter(|(_, _, mixed)| !*mixed) {
             mixer.add_key(id.clone(), *channels, settings(id));
         }

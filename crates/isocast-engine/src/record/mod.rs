@@ -1002,7 +1002,8 @@ type Output<F> = SyncSender<Packet<F>>;
 /// A frame or a chunk of audio on the session clock, on its way to a file
 /// or another output.
 pub enum Packet<F> {
-    /// A capture-reported hole on a file's audio track (host clock).
+    /// A hole on a file's audio track: reported by a capture (host clock),
+    /// or by the program mix for a source's audio it filled with silence.
     AudioGap {
         track: usize,
         from: Time,
