@@ -130,6 +130,14 @@ struct Input {
     fed: Option<i64>,
     /// Heard in the mix; otherwise only by other inputs' sidechains.
     mixed: bool,
+    /// Its output may stop and start (media, browser), so a gap in it is
+    /// expected rather than lost audio.
+    sparse: bool,
+    /// The session sample after the latest audio it has delivered.
+    received: Option<i64>,
+    /// The session sample the mix has released it up to: audio before
+    /// this that arrives now was mixed as silence.
+    released: i64,
 }
 
 impl Input {
@@ -143,7 +151,15 @@ impl Input {
             chain: AudioChain::new((channels as usize).clamp(1, 2)),
             fed: None,
             mixed,
+            sparse: false,
+            received: None,
+            released: i64::MIN,
         }
+    }
+
+    /// Whether audio it loses is lost from the program: it is heard there.
+    fn counts_gaps(&self) -> bool {
+        self.mixed && !self.sparse && self.settings.in_program() && !self.settings.muted
     }
 
     /// The frame at session sample `at`, if it has one.
@@ -208,9 +224,22 @@ impl Input {
 
     /// Add a chunk captured at session sample `at`, keeping the input
     /// continuous: small timestamp jitter is ignored, gaps become silence,
-    /// overlaps are trimmed.
-    fn push(&mut self, samples: &[f32], at: i64) {
+    /// overlaps are trimmed. Returns where audio was lost, if it was: a gap
+    /// since the audio before, or audio arriving for a span already mixed
+    /// without it (as an ISO file's track counts them).
+    fn push(&mut self, samples: &[f32], at: i64) -> Option<i64> {
         let channels = self.channels.max(1);
+        let end = at + (samples.len() / channels) as i64;
+        let lost = self.received.and_then(|received| {
+            if at > received + AUDIO_JITTER {
+                Some(received)
+            } else {
+                let from = at.max(received);
+                (at < self.released.saturating_sub(AUDIO_JITTER) && from < end.min(self.released))
+                    .then_some(from)
+            }
+        });
+        self.received = Some(self.received.map_or(end, |received| received.max(end)));
         let stereo = samples.chunks_exact(channels).map(|frame| match frame {
             [mono] => [*mono, *mono],
             [left, right, ..] => [*left, *right],
@@ -220,7 +249,7 @@ impl Input {
         if self.frames.is_empty() {
             self.start = at;
             self.frames.extend(stereo);
-            return;
+            return lost;
         }
         if at > next + AUDIO_JITTER {
             let gap = (at - next) as usize;
@@ -231,10 +260,12 @@ impl Input {
         } else {
             self.frames.extend(stereo);
         }
+        lost
     }
 
     /// Drop frames before session sample `at`.
     fn release(&mut self, at: i64) {
+        self.released = self.released.max(at);
         let old = (at - self.start).clamp(0, self.frames.len() as i64) as usize;
         self.frames.drain(..old);
         self.start += old as i64;
@@ -303,6 +334,14 @@ impl<F: Clone> Mixer<F> {
             packets,
             meter,
             filters: None,
+        }
+    }
+
+    /// Treat the inputs `sparse` says may stop and start (media, browser)
+    /// as such: a gap in their audio isn't counted as lost.
+    pub(super) fn set_sparse(&mut self, sparse: impl Fn(&str) -> bool) {
+        for input in &mut self.inputs {
+            input.sparse = sparse(&input.id);
         }
     }
 
@@ -381,11 +420,16 @@ impl<F: Clone> Mixer<F> {
                     samples,
                     pts,
                 }) => {
-                    if let Some(input) = self.inputs.get_mut(track) {
-                        input.push(&samples, pts.ticks_since(epoch, SAMPLE_RATE));
+                    if let Some(input) = self.inputs.get_mut(track)
+                        && let Some(lost) =
+                            input.push(&samples, pts.ticks_since(epoch, SAMPLE_RATE))
+                        && input.counts_gaps()
+                        && lost < last
+                    {
+                        outputs.audio_gap(epoch.add_ticks(lost.max(0) as u64, SAMPLE_RATE));
                     }
                 }
-                Ok(Packet::Video { .. } | Packet::Skipped { .. })
+                Ok(Packet::Video { .. } | Packet::Skipped { .. } | Packet::AudioGap { .. })
                 | Err(RecvTimeoutError::Timeout) => {}
                 // Every source has stopped: mix silence until the end.
                 Err(RecvTimeoutError::Disconnected) => {
@@ -477,11 +521,13 @@ impl<F: Clone> Mixer<F> {
                     samples,
                     pts,
                 }) => {
+                    // The monitor drops late input by design; recordings
+                    // count lost audio from the program mix.
                     if let Some(input) = self.inputs.get_mut(track) {
-                        input.push(&samples, pts.ticks_since(epoch, SAMPLE_RATE));
+                        let _ = input.push(&samples, pts.ticks_since(epoch, SAMPLE_RATE));
                     }
                 }
-                Ok(Packet::Video { .. } | Packet::Skipped { .. })
+                Ok(Packet::Video { .. } | Packet::Skipped { .. } | Packet::AudioGap { .. })
                 | Err(RecvTimeoutError::Timeout) => {}
                 // Every source has stopped: mix silence until told to stop.
                 Err(RecvTimeoutError::Disconnected) => {
@@ -704,6 +750,54 @@ mod tests {
         // Audio for a block already mixed is too late and is dropped.
         mixer.inputs[0].push(&[1.0; 480], 0);
         assert_eq!(mixer.mix(1440, 480), vec![0.0; 960]);
+    }
+
+    /// #160: each hole the mix fills with silence is reported once, where
+    /// it starts, as an ISO file's track counts it.
+    #[test]
+    fn lost_input_is_reported_once_where_it_starts() {
+        let mut mixer = mixer(vec![("m".into(), 1, AudioSettings::default())]);
+        let input = &mut mixer.inputs[0];
+        assert_eq!(input.push(&[0.1; 480], 0), None);
+        assert_eq!(input.push(&[0.1; 480], 480), None);
+        // Within the 2 ms jitter allowance: continuous.
+        assert_eq!(input.push(&[0.1; 480], 960 + 48), None);
+        // A missing chunk: lost from where the audio stopped.
+        assert_eq!(input.push(&[0.1; 480], 2448), Some(1488));
+        assert_eq!(input.push(&[0.1; 480], 2928), None);
+        // A repeated chunk overlaps audio the input already has: not lost.
+        assert_eq!(input.push(&[0.1; 480], 2928), None);
+
+        // A chunk the mix stopped waiting for: lost when it comes in late,
+        // and the chunk after it continues it.
+        let mut mixer = self::mixer(vec![("m".into(), 1, AudioSettings::default())]);
+        assert_eq!(mixer.inputs[0].push(&[0.1; 480], 0), None);
+        mixer.mix(0, 960);
+        assert_eq!(mixer.inputs[0].push(&[0.1; 480], 480), Some(480));
+        assert_eq!(mixer.inputs[0].push(&[0.1; 480], 960), None);
+    }
+
+    #[test]
+    fn only_audio_heard_in_the_program_counts_as_lost() {
+        let muted = AudioSettings {
+            muted: true,
+            ..AudioSettings::default()
+        };
+        let monitored = AudioSettings {
+            monitor: isocast_protocol::Monitoring::MonitorOnly,
+            ..AudioSettings::default()
+        };
+        let mut mixer = mixer(vec![
+            ("mic".into(), 1, AudioSettings::default()),
+            ("clip".into(), 2, AudioSettings::default()),
+            ("off".into(), 1, muted),
+            ("cue".into(), 1, monitored),
+        ]);
+        let key = mixer.add_key("voice".into(), 1, AudioSettings::default());
+        mixer.set_sparse(|id| id == "clip");
+        let counted: Vec<bool> = mixer.inputs.iter().map(Input::counts_gaps).collect();
+        assert_eq!(counted, [true, false, false, false, false]);
+        assert_eq!(key, 4);
     }
 
     #[test]
