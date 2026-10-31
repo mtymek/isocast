@@ -38,18 +38,6 @@ XDPW_SHA256=4bddc236aa9d1a2b33e7f0bef09a8712ded51e8bc335a2b6c8cd1d088863e676
 
 die() { echo "linux-capture-fixture: $*" >&2; exit 1; }
 
-# udev sets a new node's mode (root:video 0660 on Ubuntu), sometimes after a
-# chmod has already run, and the runner's user isn't in `video` (#166). This
-# rule, under /run and removed by stop, has udev set 0666 instead.
-CAMERA_RULE=/run/udev/rules.d/99-isocast-fixture-camera.rules
-
-camera_rule() {
-    sudo -n mkdir -p "$(dirname "$CAMERA_RULE")" &&
-        printf '%s\n' 'SUBSYSTEM=="video4linux", KERNEL=="video30", MODE="0666"' |
-        sudo -n tee "$CAMERA_RULE" >/dev/null &&
-        sudo -n udevadm control --reload-rules
-}
-
 # wait_for SECONDS DESCRIPTION COMMAND…: poll every 0.1 s.
 wait_for() {
     local seconds="$1" what="$2"
@@ -179,15 +167,7 @@ EOF
     pactl set-default-sink isocast_desktop
     wait_for 10 "the virtual microphone" sh -c 'pactl list short sources | grep -q isocast_mic'
 
-    local camera_skip= camera_log="$dir/logs/camera-node.log"
-    : >"$camera_log"
-    if modinfo v4l2loopback >/dev/null 2>&1; then
-        if camera_rule 2>>"$camera_log"; then
-            touch "$dir/camera-rule"
-        else
-            echo "the udev rule wasn't installed; relying on chmod" >>"$camera_log"
-        fi
-    fi
+    local camera_skip=
     if ! modinfo v4l2loopback >/dev/null 2>&1; then
         camera_skip="v4l2loopback is not available for kernel $(uname -r)"
     elif ! { sudo -n modprobe videodev && sudo -n modprobe v4l2loopback video_nr=30 \
@@ -199,13 +179,14 @@ EOF
         camera_skip="v4l2loopback loaded but /dev/video30 did not appear"
     else
         echo "loaded" >"$dir/v4l2loopback"
-        # Wait for udev, so the mode can't change after the check. The chmod
-        # covers a missing rule.
-        sudo -n udevadm settle --timeout=10 2>>"$camera_log" || true
+        # udev sets the new node's mode (root:video 0660 on Ubuntu; the
+        # runner's user isn't in `video`, #166), sometimes after a chmod. Let
+        # it finish the node's add event first; as root, settle also pings
+        # udevd, so an event it hasn't read yet counts.
+        sudo -n udevadm settle --timeout=10 || true
         sudo -n chmod 0666 /dev/video30
-        { id; ls -l /dev/video30; } >>"$camera_log" 2>&1
-        ( wait_for 10 "/dev/video30 to be writable" test -w /dev/video30 ) 2>/dev/null ||
-            die "/dev/video30 isn't writable by $(id -un): $(ls -l /dev/video30 2>&1); see $camera_log"
+        test -w /dev/video30 ||
+            die "/dev/video30 isn't writable by $(id): $(ls -l /dev/video30 2>&1)"
     fi
 
     {
@@ -240,10 +221,6 @@ stop() {
     if [ -f "$dir/v4l2loopback" ]; then
         sudo -n modprobe -r v4l2loopback || true
         rm -f "$dir/v4l2loopback"
-    fi
-    if [ -f "$dir/camera-rule" ]; then
-        { sudo -n rm -f "$CAMERA_RULE" && sudo -n udevadm control --reload-rules; } || true
-        rm -f "$dir/camera-rule"
     fi
 }
 
