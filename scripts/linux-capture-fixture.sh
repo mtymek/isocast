@@ -38,12 +38,9 @@ XDPW_SHA256=4bddc236aa9d1a2b33e7f0bef09a8712ded51e8bc335a2b6c8cd1d088863e676
 
 die() { echo "linux-capture-fixture: $*" >&2; exit 1; }
 
-# udev, not this script, has the last word on a device node's owner and mode:
-# its rules for the node's add event (root:video 0660 on Ubuntu) can run after
-# the node appears, undoing a chmod made in between. The runner's user isn't in
-# `video`, so the camera feed then can't open /dev/video30 ("Permission
-# denied", #166). This runtime rule (under /run, gone at reboot) makes udev
-# itself give the fixture's node 0666.
+# udev sets a new node's mode (root:video 0660 on Ubuntu), sometimes after a
+# chmod has already run, and the runner's user isn't in `video` (#166). This
+# rule, under /run and removed by stop, has udev set 0666 instead.
 CAMERA_RULE=/run/udev/rules.d/99-isocast-fixture-camera.rules
 
 camera_rule() {
@@ -202,8 +199,8 @@ EOF
         camera_skip="v4l2loopback loaded but /dev/video30 did not appear"
     else
         echo "loaded" >"$dir/v4l2loopback"
-        # Let udev finish the node's add event first, so nothing changes the
-        # mode after the check below; the chmod covers a missing rule.
+        # Wait for udev, so the mode can't change after the check. The chmod
+        # covers a missing rule.
         sudo -n udevadm settle --timeout=10 2>>"$camera_log" || true
         sudo -n chmod 0666 /dev/video30
         { id; ls -l /dev/video30; } >>"$camera_log" 2>&1
