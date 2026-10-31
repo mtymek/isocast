@@ -1,7 +1,8 @@
 //! V4L2 cameras: enumeration from `/sys/class/video4linux` (or `/dev`),
-//! MJPEG and YUYV capture through mmap streaming, converted on the CPU to
-//! BGRA frames from a bounded [`FramePool`]. Works with UVC devices and
-//! v4l2loopback. Only formats this module can decode are listed.
+//! MJPEG, YUYV and NV12 capture through mmap streaming, converted on the
+//! CPU to BGRA frames from a bounded [`FramePool`]. Works with UVC
+//! devices, v4l2loopback and the Asahi FaceTime HD Camera (`apple-isp`).
+//! Only formats this module can decode are listed.
 //!
 //! Device ids are the `/dev/v4l/by-id` link where udev made one (stable
 //! across reboots and ports), else the `/dev/videoN` node itself, which
@@ -87,6 +88,7 @@ const fn fourcc(code: &[u8; 4]) -> u32 {
 const FOURCC_MJPG: u32 = fourcc(b"MJPG");
 const FOURCC_JPEG: u32 = fourcc(b"JPEG");
 const FOURCC_YUYV: u32 = fourcc(b"YUYV");
+const FOURCC_NV12: u32 = fourcc(b"NV12");
 
 const BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 const MEMORY_MMAP: u32 = 1;
@@ -364,6 +366,9 @@ fn is_einval(error: &io::Error) -> bool {
 enum Pixel {
     Mjpeg,
     Yuyv,
+    /// Single-planar 4:2:0: a luma plane, then interleaved Cb/Cr rows at
+    /// the same stride.
+    Nv12,
 }
 
 impl Pixel {
@@ -371,16 +376,29 @@ impl Pixel {
         match code {
             FOURCC_MJPG | FOURCC_JPEG => Some(Self::Mjpeg),
             FOURCC_YUYV => Some(Self::Yuyv),
+            FOURCC_NV12 => Some(Self::Nv12),
             _ => None,
         }
     }
 
-    /// Preference at an otherwise equal size and rate: YUYV is lossless
-    /// and costs less CPU to convert than decoding MJPEG.
+    /// Preference at an otherwise equal size and rate: YUYV and NV12 are
+    /// lossless and cost less CPU to convert than decoding MJPEG; YUYV
+    /// keeps twice NV12's vertical colour resolution.
     fn rank(self) -> u8 {
         match self {
             Self::Yuyv => 0,
-            Self::Mjpeg => 1,
+            Self::Nv12 => 1,
+            Self::Mjpeg => 2,
+        }
+    }
+
+    /// Whether this backend converts a `width`x`height` picture: chroma
+    /// pairs need an even width, NV12's shared chroma rows an even height.
+    fn fits(self, width: u32, height: u32) -> bool {
+        match self {
+            Self::Yuyv => width.is_multiple_of(2),
+            Self::Nv12 => width.is_multiple_of(2) && height.is_multiple_of(2),
+            Self::Mjpeg => true,
         }
     }
 }
@@ -534,7 +552,8 @@ fn frame_rates(fd: RawFd, code: u32, width: u32, height: u32) -> Rates {
     }
 }
 
-/// Every decodable (MJPEG or YUYV) size the device offers, with its rates.
+/// Every decodable (MJPEG, YUYV or NV12) size the device offers, with its
+/// rates.
 fn sizes(fd: RawFd) -> Result<Vec<Size>> {
     let mut sizes = Vec::new();
     for index in 0..MAX_ENUM {
@@ -547,14 +566,14 @@ fn sizes(fd: RawFd) -> Result<Vec<Size>> {
             }
             return Err(error).context("camera.formats: VIDIOC_ENUM_FMT");
         }
-        if Pixel::from_fourcc(desc.pixelformat).is_none() {
+        let Some(pixel) = Pixel::from_fourcc(desc.pixelformat) else {
             continue;
-        }
+        };
         for (width, height) in frame_sizes(fd, desc.pixelformat)? {
             if !(1..=MAX_DIMENSION).contains(&width) || !(1..=MAX_DIMENSION).contains(&height) {
                 continue;
             }
-            if desc.pixelformat == FOURCC_YUYV && !width.is_multiple_of(2) {
+            if !pixel.fits(width, height) {
                 continue;
             }
             if sizes.len() == MAX_SIZES {
@@ -659,7 +678,7 @@ fn video_formats(sizes: &[Size]) -> Vec<VideoFormat> {
 
 /// The mode `request` asks for, or the nearest to `canvas`. Requested
 /// fields are constraints; open ones prefer the canvas size, then rate,
-/// then YUYV over MJPEG.
+/// then YUYV over NV12 over MJPEG.
 fn select(modes: &[Mode], request: CameraRequest, canvas: &Canvas) -> Result<Mode> {
     let wanted = request.size.unwrap_or((canvas.width, canvas.height));
     let fps = request.fps.unwrap_or(canvas.fps);
@@ -698,7 +717,7 @@ fn select(modes: &[Mode], request: CameraRequest, canvas: &Canvas) -> Result<Mod
         .collect();
     choices.dedup();
     bail!(
-        "camera.size/fps: request {request:?} has no MJPG or YUYV match; choices: {}",
+        "camera.size/fps: request {request:?} has no MJPG, YUYV or NV12 match; choices: {}",
         if choices.is_empty() {
             "(none)".to_string()
         } else {
@@ -899,8 +918,8 @@ pub fn devices() -> Result<Vec<Camera>> {
                         "info",
                         module_path!(),
                         format!(
-                            "Linux camera devices: skipping {:?} ({}): no MJPEG or YUYV \
-                             format; it offers {}",
+                            "Linux camera devices: skipping {:?} ({}): no MJPEG, YUYV or \
+                             NV12 format; it offers {}",
                             camera.name,
                             node.display(),
                             offered_formats(file.as_raw_fd()).join(", ")
@@ -1153,6 +1172,60 @@ fn yuyv_to_bgra(
     Ok(())
 }
 
+/// Bytes a single-planar NV12 picture occupies: `height` luma rows at
+/// `stride`, then `height / 2` chroma rows of `width` bytes at the same
+/// stride. The last chroma row needs no padding.
+fn nv12_extent(stride: usize, width: usize, height: usize) -> Option<usize> {
+    stride
+        .checked_mul(height)?
+        .checked_add(extent(stride, width, height / 2)?)
+}
+
+fn nv12_to_bgra(
+    source: &[u8],
+    source_stride: usize,
+    width: usize,
+    height: usize,
+    yuv: &Yuv,
+    target: &mut [u8],
+    target_stride: usize,
+) -> Result<()> {
+    ensure!(
+        width > 0 && height > 0 && width.is_multiple_of(2) && height.is_multiple_of(2),
+        "camera.nv12: {width}x{height} must be positive with an even width and height"
+    );
+    let out = width * 4;
+    ensure!(
+        source_stride >= width && target_stride >= out,
+        "camera.nv12: stride {source_stride} is less than a {width}-pixel row"
+    );
+    let need =
+        nv12_extent(source_stride, width, height).context("camera.nv12: frame size overflow")?;
+    ensure!(
+        source.len() >= need,
+        "camera.nv12: frame has {} bytes, {width}x{height} at stride {source_stride} needs {need}",
+        source.len()
+    );
+    let need = extent(target_stride, out, height).context("camera.nv12: frame size overflow")?;
+    ensure!(target.len() >= need, "camera.nv12: target frame too small");
+    let (luma, chroma) = source.split_at(source_stride * height);
+    for (row, target) in target.chunks_mut(target_stride).take(height).enumerate() {
+        let y = &luma[row * source_stride..][..width];
+        let uv = &chroma[row / 2 * source_stride..][..width];
+        for ((y, uv), pixels) in y
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .zip(uv.as_chunks::<2>().0)
+            .zip(target[..out].as_chunks_mut::<8>().0)
+        {
+            pixels[..4].copy_from_slice(&yuv.bgra(y[0], uv[0], uv[1]));
+            pixels[4..].copy_from_slice(&yuv.bgra(y[1], uv[0], uv[1]));
+        }
+    }
+    Ok(())
+}
+
 fn rgb_to_bgra(
     source: &[u8],
     channels: usize,
@@ -1354,7 +1427,7 @@ struct Layout {
     pixel: Pixel,
     width: u32,
     height: u32,
-    /// YUYV bytes per row.
+    /// YUYV bytes per row, or NV12 bytes per luma and chroma row.
     stride: usize,
     yuv: Yuv,
 }
@@ -1372,6 +1445,19 @@ fn draw_frame(
     let frame = match layout.pixel {
         Pixel::Yuyv => pool.draw(&mut |pixels, stride| {
             if let Err(error) = yuyv_to_bgra(
+                data,
+                layout.stride,
+                width,
+                height,
+                &layout.yuv,
+                pixels,
+                stride,
+            ) {
+                failure = Some(error);
+            }
+        })?,
+        Pixel::Nv12 => pool.draw(&mut |pixels, stride| {
+            if let Err(error) = nv12_to_bgra(
                 data,
                 layout.stride,
                 width,
@@ -1793,22 +1879,26 @@ fn set_format(fd: RawFd, mode: &Mode) -> Result<Layout> {
         "camera.format: interlaced pictures (field {}) are not supported",
         pix.field
     );
-    let stride = match mode.pixel {
-        Pixel::Yuyv => {
-            let row = mode.width as usize * 2;
-            let stride = if pix.bytesperline == 0 {
-                row
-            } else {
-                pix.bytesperline as usize
-            };
-            ensure!(
-                (row..=MAX_DIMENSION as usize * 4).contains(&stride),
-                "camera.format: YUYV row stride {stride} for width {}",
-                mode.width
-            );
-            stride
-        }
+    let row = match mode.pixel {
+        Pixel::Yuyv => mode.width as usize * 2,
+        Pixel::Nv12 => mode.width as usize,
         Pixel::Mjpeg => 0,
+    };
+    let stride = if row == 0 {
+        0
+    } else {
+        let stride = if pix.bytesperline == 0 {
+            row
+        } else {
+            pix.bytesperline as usize
+        };
+        ensure!(
+            (row..=MAX_DIMENSION as usize * 4).contains(&stride),
+            "camera.format: {} row stride {stride} for width {}",
+            fourcc_name(mode.fourcc),
+            mode.width
+        );
+        stride
     };
     Ok(Layout {
         pixel: mode.pixel,
@@ -1897,6 +1987,8 @@ pub fn capture(
             layout.height as usize,
         )
         .context("camera.format: frame size overflow")?,
+        Pixel::Nv12 => nv12_extent(layout.stride, layout.width as usize, layout.height as usize)
+            .context("camera.format: frame size overflow")?,
         Pixel::Mjpeg => 1,
     };
     let pool = FramePool::new(layout.width, layout.height)?;
@@ -1966,6 +2058,7 @@ mod tests {
         assert_eq!(VIDIOC_ENUM_FRAMEINTERVALS, 0xc034_564b);
         assert_eq!(fourcc_name(FOURCC_MJPG), "MJPG");
         assert_eq!(fourcc_name(FOURCC_YUYV), "YUYV");
+        assert_eq!(fourcc_name(FOURCC_NV12), "NV12");
     }
 
     #[test]
@@ -2022,6 +2115,165 @@ mod tests {
         assert!(yuyv_to_bgra(&source, 4, 4, 2, &yuv, &mut target, 20).is_err());
         assert!(yuyv_to_bgra(&source, 12, 3, 2, &yuv, &mut target, 20).is_err());
         assert!(yuyv_to_bgra(&source, 12, 4, 2, &yuv, &mut target[..30], 20).is_err());
+    }
+
+    /// BGRA pixel `(x, y)` of a converted picture.
+    fn pixel(target: &[u8], stride: usize, x: usize, y: usize) -> [u8; 4] {
+        target[y * stride + x * 4..][..4].try_into().unwrap()
+    }
+
+    /// A 4x4 NV12 picture of four 2x2 blocks, each one Y'CbCr colour, at
+    /// stride 4: its blocks' expected BGRA come back from `nv12_to_bgra`.
+    fn nv12_blocks(yuv: &Yuv, blocks: [([u8; 3], [u8; 4]); 4]) {
+        let mut source = vec![0; 4 * 4 + 4 * 2];
+        for (index, ([y, u, v], _)) in blocks.iter().enumerate() {
+            let (bx, by) = (index % 2, index / 2);
+            for row in by * 2..by * 2 + 2 {
+                source[row * 4 + bx * 2..][..2].fill(*y);
+            }
+            source[16 + by * 4 + bx * 2..][..2].copy_from_slice(&[*u, *v]);
+        }
+        let mut target = vec![0; 4 * 4 * 4];
+        nv12_to_bgra(&source, 4, 4, 4, yuv, &mut target, 16).unwrap();
+        for (index, (input, expected)) in blocks.iter().enumerate() {
+            let (bx, by) = (index % 2, index / 2);
+            for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let got = pixel(&target, 16, bx * 2 + x, by * 2 + y);
+                assert!(
+                    close(got, *expected),
+                    "Y'CbCr {input:?} at ({}, {}): {got:?}, expected {expected:?}",
+                    bx * 2 + x,
+                    by * 2 + y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nv12_converts_reference_colors_like_yuyv() {
+        let white = [255, 255, 255, 255];
+        let black = [0, 0, 0, 255];
+        let red = [0, 0, 255, 255];
+        let green = [0, 255, 0, 255];
+        let blue = [255, 0, 0, 255];
+        // Limited-range BT.601, the V4L2 default for an sRGB camera.
+        nv12_blocks(
+            &Yuv::from_format(8, 0, 0),
+            [
+                ([235, 128, 128], white),
+                ([16, 128, 128], black),
+                ([81, 90, 240], red),
+                ([145, 54, 34], green),
+            ],
+        );
+        nv12_blocks(
+            &Yuv::from_format(8, 0, 0),
+            [
+                ([41, 240, 110], blue),
+                ([126, 128, 128], [128, 128, 128, 255]),
+                ([210, 16, 146], [0, 255, 255, 255]),
+                ([106, 202, 222], [255, 0, 255, 255]),
+            ],
+        );
+        // Limited-range Rec. 709 and full-range BT.601 follow the driver.
+        nv12_blocks(
+            &Yuv::from_format(3, 0, 2),
+            [
+                ([63, 102, 240], red),
+                ([173, 42, 26], green),
+                ([32, 240, 118], blue),
+                ([235, 128, 128], white),
+            ],
+        );
+        nv12_blocks(
+            &Yuv::from_format(7, 0, 0),
+            [
+                ([255, 128, 128], white),
+                ([0, 128, 128], black),
+                ([76, 85, 255], red),
+                ([150, 44, 21], green),
+            ],
+        );
+        // Every pixel keeps its own luma; only chroma is shared by a block.
+        let yuv = Yuv::new(Yuv::BT601, false);
+        let source = [235, 16, 16, 235, 128, 128];
+        let mut target = [0; 16];
+        nv12_to_bgra(&source, 2, 2, 2, &yuv, &mut target, 8).unwrap();
+        assert!(close(pixel(&target, 8, 0, 0), white));
+        assert!(close(pixel(&target, 8, 1, 0), black));
+        assert!(close(pixel(&target, 8, 0, 1), black));
+        assert!(close(pixel(&target, 8, 1, 1), white));
+    }
+
+    #[test]
+    fn nv12_respects_odd_strides_and_rejects_short_frames() {
+        let yuv = Yuv::new(Yuv::BT601, false);
+        // 4x2 at an odd source stride of 7 (3 padding bytes per row); the
+        // chroma row starts at 7 * 2, after the luma rows' padding.
+        let mut source = vec![0xee; 7 * 2 + 4];
+        source[..4].copy_from_slice(&[235, 16, 81, 81]);
+        source[7..11].copy_from_slice(&[16, 235, 81, 81]);
+        source[14..18].copy_from_slice(&[128, 128, 90, 240]);
+        let mut target = vec![7; 20 * 2];
+        nv12_to_bgra(&source, 7, 4, 2, &yuv, &mut target, 20).unwrap();
+        assert!(close(pixel(&target, 20, 0, 0), [255, 255, 255, 255]));
+        assert!(close(pixel(&target, 20, 1, 0), [0, 0, 0, 255]));
+        assert!(close(pixel(&target, 20, 2, 0), [0, 0, 255, 255]));
+        assert!(close(pixel(&target, 20, 3, 0), [0, 0, 255, 255]));
+        assert!(close(pixel(&target, 20, 0, 1), [0, 0, 0, 255]));
+        assert!(close(pixel(&target, 20, 1, 1), [255, 255, 255, 255]));
+        assert!(close(pixel(&target, 20, 3, 1), [0, 0, 255, 255]));
+        // Target padding is untouched.
+        assert_eq!(&target[16..20], &[7, 7, 7, 7]);
+        assert_eq!(&target[36..40], &[7, 7, 7, 7]);
+
+        assert_eq!(nv12_extent(7, 4, 2), Some(18));
+        // Drivers may report more bytes than the picture needs.
+        let mut longer = source.clone();
+        longer.extend_from_slice(&[0; 10]);
+        let mut again = vec![7; 20 * 2];
+        nv12_to_bgra(&longer, 7, 4, 2, &yuv, &mut again, 20).unwrap();
+        assert_eq!(again, target);
+
+        // The last chroma row needs no padding; one byte less is refused.
+        assert!(nv12_to_bgra(&source[..17], 7, 4, 2, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source[..14], 7, 4, 2, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&[], 7, 4, 2, &yuv, &mut target, 20).is_err());
+        // A stride shorter than a row, odd sizes, empty sizes and a short
+        // target are errors, never panics.
+        assert!(nv12_to_bgra(&source, 3, 4, 2, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source, 7, 3, 2, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source, 7, 4, 1, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source, 7, 0, 2, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source, 7, 4, 0, &yuv, &mut target, 20).is_err());
+        assert!(nv12_to_bgra(&source, 7, 4, 2, &yuv, &mut target, 15).is_err());
+        assert!(nv12_to_bgra(&source, 7, 4, 2, &yuv, &mut target[..35], 20).is_err());
+        assert!(nv12_to_bgra(&source, usize::MAX, 4, 2, &yuv, &mut target, 20).is_err());
+        assert_eq!(nv12_extent(usize::MAX, 4, 2), None);
+    }
+
+    #[test]
+    fn nv12_frames_come_from_the_pool() {
+        let mut pool = FramePool::new(2, 2).unwrap();
+        let layout = Layout {
+            pixel: Pixel::Nv12,
+            width: 2,
+            height: 2,
+            stride: 2,
+            yuv: Yuv::new(Yuv::BT601, false),
+        };
+        let mut jpeg = Jpeg::default();
+        let data = [235, 16, 16, 235, 128, 128];
+        let frame = draw_frame(&mut pool, &layout, &data, &mut jpeg)
+            .unwrap()
+            .unwrap();
+        let bgra = frame.read_bgra().unwrap();
+        assert_eq!(bgra.len(), 2 * 2 * 4);
+        assert!(close(bgra[..4].try_into().unwrap(), [255, 255, 255, 255]));
+        assert!(close(bgra[4..8].try_into().unwrap(), [0, 0, 0, 255]));
+        assert!(close(bgra[8..12].try_into().unwrap(), [0, 0, 0, 255]));
+        assert!(close(bgra[12..].try_into().unwrap(), [255, 255, 255, 255]));
+        assert!(draw_frame(&mut pool, &layout, &data[..5], &mut jpeg).is_err());
     }
 
     fn encode(width: u32, height: u32) -> (Vec<u8>, image::RgbImage) {
@@ -2297,6 +2549,89 @@ mod tests {
         assert_eq!(pick(&cameras, "brio"), Some(0));
         assert_eq!(pick(&cameras, "/dev/video2"), None);
         assert_eq!(pick(&cameras, "capture"), Some(1));
+    }
+
+    #[test]
+    fn an_nv12_only_camera_is_listed_and_selected() {
+        assert_eq!(Pixel::from_fourcc(FOURCC_NV12), Some(Pixel::Nv12));
+        assert!(Pixel::Nv12.fits(1920, 1080));
+        assert!(!Pixel::Nv12.fits(1921, 1080), "odd width");
+        assert!(!Pixel::Nv12.fits(1920, 1081), "odd height");
+        assert!(Pixel::Yuyv.fits(1920, 1081));
+        assert!(Pixel::Mjpeg.fits(1921, 1081));
+
+        let sizes = vec![
+            size(FOURCC_NV12, 1920, 1080, &[30]),
+            size(FOURCC_NV12, 1280, 720, &[30, 60]),
+            size(FOURCC_NV12, 640, 480, &[30]),
+        ];
+        let listed = Ok(sizes.clone());
+        assert!(is_camera(&listed), "an NV12-only node is a camera");
+        let formats = video_formats(&sizes);
+        assert_eq!(formats.len(), 3);
+        assert!(formats.iter().all(|f| f.pixel_format == "NV12"));
+        assert_eq!((formats[0].width, formats[0].height), (1920, 1080));
+
+        let modes = modes(&sizes);
+        assert_eq!(modes.len(), 4);
+        assert!(modes.iter().all(|m| m.pixel == Pixel::Nv12));
+        let canvas = Canvas {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+        };
+        let mode = select(&modes, CameraRequest::default(), &canvas).unwrap();
+        assert_eq!(
+            (mode.width, mode.height, mode.fps, mode.pixel, mode.fourcc),
+            (1920, 1080, Some(30), Pixel::Nv12, FOURCC_NV12)
+        );
+        let mode = select(
+            &modes,
+            CameraRequest {
+                size: Some((1280, 720)),
+                fps: Some(60),
+            },
+            &canvas,
+        )
+        .unwrap();
+        assert_eq!((mode.width, mode.fps), (1280, Some(60)));
+        let error = select(
+            &modes,
+            CameraRequest {
+                size: Some((3840, 2160)),
+                fps: None,
+            },
+            &canvas,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("1920x1080@30 NV12"), "{error}");
+    }
+
+    #[test]
+    fn nv12_ranks_between_yuyv_and_mjpeg() {
+        let canvas = Canvas {
+            width: 1280,
+            height: 720,
+            fps: 30,
+        };
+        let chosen = |sizes: &[Size]| {
+            select(&modes(sizes), CameraRequest::default(), &canvas)
+                .unwrap()
+                .pixel
+        };
+        let nv12 = size(FOURCC_NV12, 1280, 720, &[30]);
+        let yuyv = size(FOURCC_YUYV, 1280, 720, &[30]);
+        let mjpeg = size(FOURCC_MJPG, 1280, 720, &[30]);
+        assert_eq!(chosen(&[mjpeg.clone(), nv12.clone()]), Pixel::Nv12);
+        assert_eq!(chosen(&[nv12.clone(), yuyv.clone()]), Pixel::Yuyv);
+        assert_eq!(chosen(&[mjpeg, nv12, yuyv]), Pixel::Yuyv);
+        // Size and rate still come before the pixel format.
+        let sizes = [
+            size(FOURCC_YUYV, 640, 480, &[30]),
+            size(FOURCC_NV12, 1280, 720, &[30]),
+        ];
+        assert_eq!(chosen(&sizes), Pixel::Nv12);
     }
 
     #[test]
