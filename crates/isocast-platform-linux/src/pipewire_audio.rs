@@ -246,8 +246,8 @@ fn enumerate(cancel: &AtomicBool, include_apps: bool) -> Result<Inventory> {
     let error = failure.clone();
     let _core_listener = core
         .add_listener_local()
-        .error(move |id, _, _, message| {
-            if id == pw::core::PW_ID_CORE {
+        .error(move |id, _, result, message| {
+            if fatal_enumeration_error(id, result) {
                 *error.borrow_mut() = Some(message.to_owned());
             }
         })
@@ -989,6 +989,12 @@ fn reconcile_links(
     }
     links.retain(|pair, _| !policy.skipped.contains(&pair.output_node));
     Ok(())
+}
+
+fn fatal_enumeration_error(id: u32, result: i32) -> bool {
+    // Core ENOENT ("unknown resource N op:2") answers a request to a node that
+    // vanished before our bind; global_remove drops it from the inventory.
+    id == pw::core::PW_ID_CORE && result != -libc::ENOENT
 }
 
 fn fatal_capture_error(
@@ -2643,6 +2649,16 @@ mod tests {
             timeline.silence(Some(30), end.add_ticks(128, RATE), 1024, true),
             Some((end, 128))
         );
+    }
+
+    #[test]
+    fn enumeration_ignores_core_enoent_only() {
+        assert!(!fatal_enumeration_error(18, -libc::ENOENT));
+        assert!(!fatal_enumeration_error(
+            pw::core::PW_ID_CORE,
+            -libc::ENOENT
+        ));
+        assert!(fatal_enumeration_error(pw::core::PW_ID_CORE, -libc::EPIPE));
     }
 
     #[test]
