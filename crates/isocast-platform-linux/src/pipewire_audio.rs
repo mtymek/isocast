@@ -1419,22 +1419,36 @@ fn capture_worker(
         None
     };
     let mut app_links = BTreeMap::new();
-    let mut check_realtime = None;
+    let mut check_realtime: Option<RealtimeCheck> = None;
     while !cancel.load(Ordering::Acquire) {
         iterate(&mainloop)?;
-        if check_realtime.is_some_and(|at: Instant| at.elapsed() >= Duration::from_secs(1)) {
-            // RTKit grants asynchronously and can silently deny a request.
-            // Observe the actual data thread, never mistake a request for a grant.
+        // Observe the actual data thread, never mistake a request for a grant.
+        if let Some(check) = &mut check_realtime
+            && let Some(verdict) = check.poll(Instant::now(), || capture_is_realtime(&context))
+        {
             check_realtime = None;
-            if !capture_is_realtime(&context) {
-                static WARN_NOT_REALTIME: std::sync::Once = std::sync::Once::new();
-                WARN_NOT_REALTIME.call_once(|| {
-                    isocast_diagnostics::output::deferred(
-                        "warn",
-                        module_path!(),
-                        "PipeWire audio data loop is not realtime; short graph cycles may be lost under load. Allow RTKit realtime scheduling for this session or configure RLIMIT_RTPRIO for isocastd. Recording will continue.".into(),
-                    );
-                });
+            match verdict {
+                Realtime::Granted(waited) => isocast_diagnostics::output::deferred(
+                    "info",
+                    module_path!(),
+                    format!(
+                        "PipeWire audio data loop is realtime ({} ms after capture started)",
+                        waited.as_millis()
+                    ),
+                ),
+                Realtime::Denied => {
+                    static WARN_NOT_REALTIME: std::sync::Once = std::sync::Once::new();
+                    WARN_NOT_REALTIME.call_once(|| {
+                        isocast_diagnostics::output::deferred(
+                            "warn",
+                            module_path!(),
+                            format!(
+                                "PipeWire audio data loop is not realtime {} s after capture started; short graph cycles may be lost under load. Allow RTKit realtime scheduling for this session or configure RLIMIT_RTPRIO for isocastd. Recording will continue.",
+                                REALTIME_GRACE.as_secs()
+                            ),
+                        );
+                    });
+                }
             }
         }
         let mut graph_ready = true;
@@ -1463,7 +1477,7 @@ fn capture_worker(
                     .send(Ok(count))
                     .context("PipeWire startup caller disconnected")?;
                 *started = true;
-                check_realtime = Some(Instant::now());
+                check_realtime = Some(RealtimeCheck::new(Instant::now()));
             } else {
                 ensure!(
                     Instant::now() < deadline,
@@ -1628,6 +1642,55 @@ fn capture_buffers() -> Result<Vec<u8>> {
     .map_err(|error| anyhow!("serializing PipeWire audio buffers: {error:?}"))?
     .0
     .into_inner())
+}
+
+/// How long capture waits for its data loop to become realtime before
+/// reporting that it isn't. RTKit grants asynchronously, and the grant
+/// can land after the stream is already running; a denial is silent.
+const REALTIME_GRACE: Duration = Duration::from_secs(10);
+/// How often the data loop's scheduling is read while waiting.
+const REALTIME_POLL: Duration = Duration::from_millis(250);
+
+/// The data loop's scheduling, once decided.
+#[derive(Debug, PartialEq)]
+enum Realtime {
+    /// Realtime, first seen this long after capture started.
+    Granted(Duration),
+    /// Still not realtime after [`REALTIME_GRACE`].
+    Denied,
+}
+
+/// Reads the data loop's scheduling every [`REALTIME_POLL`] from the
+/// start of capture until it is realtime or [`REALTIME_GRACE`] has passed.
+struct RealtimeCheck {
+    started: Instant,
+    next: Instant,
+}
+
+impl RealtimeCheck {
+    fn new(now: Instant) -> Self {
+        Self {
+            started: now,
+            next: now,
+        }
+    }
+
+    /// When a read is due at `now`, take it with `realtime`. Returns the
+    /// verdict once there is one; `None` means keep polling.
+    fn poll(&mut self, now: Instant, realtime: impl FnOnce() -> bool) -> Option<Realtime> {
+        if now < self.next {
+            return None;
+        }
+        let waited = now.saturating_duration_since(self.started);
+        if realtime() {
+            return Some(Realtime::Granted(waited));
+        }
+        if waited >= REALTIME_GRACE {
+            return Some(Realtime::Denied);
+        }
+        self.next = now + REALTIME_POLL;
+        None
+    }
 }
 
 fn realtime_policy(policy: i32) -> bool {
@@ -1852,6 +1915,37 @@ mod tests {
             assert!(realtime_policy(policy));
             assert!(realtime_policy(policy | libc::SCHED_RESET_ON_FORK));
         }
+    }
+
+    #[test]
+    fn a_late_realtime_grant_is_not_reported_as_denied() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut check = RealtimeCheck::new(start);
+        // RTKit hasn't answered yet: keep polling, no verdict.
+        assert_eq!(check.poll(at(0), || false), None);
+        assert_eq!(check.poll(at(1000), || false), None);
+        // Not due again until the poll interval has passed.
+        assert_eq!(
+            check.poll(at(1100), || panic!("read before it was due")),
+            None
+        );
+        assert_eq!(
+            check.poll(at(1600), || true),
+            Some(Realtime::Granted(Duration::from_millis(1600)))
+        );
+    }
+
+    #[test]
+    fn realtime_is_reported_denied_only_after_the_grace_period() {
+        let start = Instant::now();
+        let mut check = RealtimeCheck::new(start);
+        let mut now = start;
+        while now < start + REALTIME_GRACE {
+            assert_eq!(check.poll(now, || false), None, "{:?}", now - start);
+            now += REALTIME_POLL;
+        }
+        assert_eq!(check.poll(now, || false), Some(Realtime::Denied));
     }
 
     // Run with ISOCAST_EXPECT_RT=1 for an authorized RTKit/direct-RT session,
