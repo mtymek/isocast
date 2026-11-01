@@ -130,6 +130,8 @@ SCENARIOS = (
     "win_takes",
     "win_scenes",
     "win_recovery",
+    "win_isolated",
+    "win_machine_profile",
     "win_preview_recording",
     "win_app_audio",
     "win_monitor",
@@ -148,6 +150,9 @@ elif sys.platform.startswith("linux"):
         "linux_browser",
         "linux_shared_frames",
     )
+
+if sys.platform in ("darwin", "linux"):
+    SCENARIOS += ("browser_audio_gap",)
 
 FPS = 60
 RATE = 48000
@@ -491,6 +496,15 @@ class WindowsChild:
         code = wintypes.DWORD()
         require(self.k32.GetExitCodeProcess(self.handle, ctypes.byref(code)), "cannot read test daemon exit")
         return code.value
+
+    def created(self):
+        import ctypes
+        from ctypes import wintypes
+        self.k32.GetProcessTimes.argtypes = [wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4)]
+        times = [wintypes.FILETIME() for _ in range(4)]
+        require(self.k32.GetProcessTimes(self.handle, *(ctypes.byref(t) for t in times)),
+                "cannot read owned process creation time")
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
 
     def close(self):
         if self.handle:
@@ -4392,6 +4406,42 @@ def scenario_linux_shared_frames(e, cfg, evidence):
                 f"width {width}: rings {got['rings']}")
     evidence["shared_frames"] = results
 
+    # Hold both slots, so there are no already-submitted frames when the
+    # governor pauses. Releasing them must not produce frames at 0 fps;
+    # the same subscription must deliver later ticks in order on resume.
+    import select
+    with engine_connection(e.sock, 10) as sock, sock.makefile("rb", buffering=0) as reader:
+        def send(value):
+            sock.sendall((json.dumps(value) + "\n").encode())
+
+        def frame():
+            return json.loads(reader.readline())["frame"]
+
+        def release(f):
+            send({"release": {k: f[k] for k in ("generation", "slot")}})
+
+        send({"jsonrpc": "2.0", "id": 1, "method": "shared_frames", "params": {"slots": 2}})
+        require(json.loads(reader.readline())["result"]["transport"] == "memfd-unix", "not a memfd viewer")
+        require(json.loads(reader.readline())["ring"]["slots"] == 2, "expected two shared slots")
+        held = [frame(), frame()]
+        require(held[0]["slot"] != held[1]["slot"], "reused a slot before release")
+        ticks = [f["time"] for f in held]
+        e.rpc("start", {})
+        try:
+            paused = e.rpc("status")["governor"]["preview_fps"] == 0
+            for f in held:
+                release(f)
+            if paused:  # Software GPU protecting the take, as in hosted CI.
+                require(not select.select([sock], [], [], .5)[0], "shared frames continued at 0 fps")
+        finally:
+            e.rpc("stop")
+        for _ in range(8):
+            f = frame()
+            ticks.append(f["time"])
+            release(f)
+        require(all(b > a for a, b in zip(ticks, ticks[1:])), f"shared ticks out of order: {ticks}")
+        evidence["shared_frame_order"] = {"ticks": ticks, "pause_checked": paused}
+
 
 LINUX_CAPTURE_SECONDS = 15
 LINUX_CAPTURE_CANVAS = (480, 270)
@@ -4712,6 +4762,53 @@ draw();
 </script></body></html>""")
 
 
+def scenario_browser_audio_gap(e, cfg, evidence):
+    """Exercise the real page bridge and stampers without a production fault switch."""
+    if LINUX and not (e.binary.parent / "isocast-browser").is_file():
+        raise Skip("needs the Linux browser helper next to isocastd")
+    page = e.root / "gap.html"
+
+    def render(loss):
+        # Mimic the lost Web Audio quanta in #203: callbacks keep arriving,
+        # but 21 successive buffers each lack 10 ms of samples. This leaves
+        # 60 ms above one resync and 90 ms below two, despite arrival jitter.
+        page.write_text("""<body style='background:green'><script>
+let last = Math.round(performance.now() * 48), tick = 0;
+setInterval(() => {
+  const end = Math.round(performance.now() * 48);
+  const frames = Math.min(end-last, 48000) - (tick >= 10 && tick < 31 ? LOSS : 0);
+  last = end; tick++;
+  if (frames > 0) webkit.messageHandlers.isocastAudio.postMessage('48000:' + btoa(String.fromCharCode(0).repeat(8*frames)));
+}, 40);
+</script>""".replace("LOSS", str(loss)))
+
+    render(0)
+    cfg["canvas"].update(width=320, height=180, fps=30)
+    cfg["sources"] = [{"id": "web", "kind": "browser", "file": str(page), "width": 320,
+                       "height": 180, "fps": 30, "control_audio": True}]
+    cfg["scenes"][0]["items"] = [item("web", (0, 0, 1, 1), (320, 180))]
+    cfg["recording"]["program"]["audio"] = ["web"]
+    cfg["recording"]["iso"].update(enabled=True, sources=["web"], audio=["web"])
+    e.apply(cfg)
+    started = e.rpc("start", {})
+    time.sleep(1)
+    render(480)
+    e.rpc("refresh_browser", {"source": "web"})
+    def losses():
+        live = e.rpc("status").get("live") or {}
+        counts = {f["source"]: f["audio_dropouts"] for f in live.get("files", [])}
+        return counts if counts == {"program": 1, "web": 1} else None
+    evidence["live_dropouts"] = until(losses, 10, "one reported gap on the browser ISO and program")
+    stop = e.rpc("stop")
+    stopped = {f["source"]: f["audio_dropouts"] for f in stop["files"]}
+    require(stopped == evidence["live_dropouts"], f"stop disagrees with live dropouts: {stopped}")
+    evidence["stopped_dropouts"] = stopped
+    manifest = read_json(started["manifest"])
+    counts = {f["source"]: f["audio_dropouts"] for f in manifest["files"]}
+    require(counts == evidence["live_dropouts"], f"manifest disagrees with live dropouts: {counts}")
+    evidence["manifest_dropouts"] = counts
+
+
 def scenario_linux_browser(e, cfg, evidence):
     """A browser source on Linux (the isocast-browser helper next to the
     daemon: WebKitGTK 6 on a private GTK Broadway display) over a green
@@ -4778,6 +4875,8 @@ def scenario_linux_browser(e, cfg, evidence):
             time.sleep(0.25)
     evidence["start_refusals"] = refused
     evidence["files"] = check_take(path, manifest, seconds, expected_sources=["program", "web"], evidence=evidence)
+    web = next(f for f in manifest["files"] if f["source"] == "web")
+    require(web["audio_dropouts"] == 0, f"continuous browser audio reported {web['audio_dropouts']} dropouts")
     evidence["writer_drops"] = {f["source"]: f["dropped_frames"] for f in manifest["files"]}
     lost = {k: v for k, v in evidence["writer_drops"].items() if v}
     require(not lost, f"writer drops (zero required, also under --hosted): {lost}")
@@ -5100,6 +5199,240 @@ def scenario_win_preview_recording(e, cfg, evidence):
             name = target.replace(":", "-")
             (e.root / f"{name}-preview.json").write_text(outputs[target][0])
             (e.root / f"{name}-preview.log").write_text(outputs[target][1])
+
+
+def scenario_win_isolated(e, cfg, evidence):
+    """Real CLI lifetime, dead/reused PID cleanup and recovery-before-deletion."""
+    if not WINDOWS:
+        raise Skip("Windows isolated record workspace cleanup")
+    if os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted":
+        raise Skip("GitHub-hosted Windows jobs deny CREATE_BREAKAWAY_FROM_JOB (error 5), "
+                   "including the same-user Limited scheduled task; qualify on controlled Windows")
+    e.stop()
+    temp = e.root / "temp"
+    temp.mkdir()
+    e.env.update(TMP=str(temp), TEMP=str(temp))
+    e.start()
+    cfg = setup(e.root, "h264", width=320, height=180, fps=30)
+    config = e.root / "record.json"
+    write_json(config, cfg)
+    # A separate caller registry proves the startup sweep can discover/recover
+    # the output even when the main daemon has never recorded in this folder.
+    env = dict(e.env, ISOCAST_DAEMON=str(e.binary), ISOCAST_SETUP=str(e.root / "caller" / "setup.toml"))
+    cli = e.binary.parent / "isocast.exe"
+    argv = [str(cli), "record", str(config), "--json"]
+    private = copy.copy(e)  # RPC endpoint only; the CLI owns this daemon.
+    other = temp / "isocast-startup-scope"
+    other.mkdir()
+    write_json(other / "record-owner.json", {"pid": 4294967295, "created": 1})
+    os.utime(other / "record-owner.json", (time.time() - 172800,) * 2)
+    crash = None
+    for label, seconds in (("normal", "10"), ("crash", None)):
+        before = set(temp.glob("isocast-*"))
+        with (e.root / f"{label}-cli.out").open("wb") as out, (e.root / f"{label}-cli.err").open("wb") as err:
+            process = subprocess.Popen(argv + (["--seconds", seconds] if seconds else []),
+                                       env=env, stdout=out, stderr=err, cwd=e.root)
+            child = None
+            try:
+                workspace = until(lambda: next(iter(set(temp.glob("isocast-*")) - before), None),
+                                  description="CLI workspace")
+                private.sock = workspace / "daemon.sock"
+                def ready():
+                    require(process.poll() is None, "record CLI exited before its daemon became ready")
+                    try:
+                        return private.rpc("status")
+                    except (OSError, RpcError):
+                        return None
+                status = until(ready, description="CLI-owned daemon")
+                child = WindowsChild(status["daemon"]["pid"])
+                identity = {"pid": status["daemon"]["pid"], "created": child.created()}
+                require(status["daemon"]["parent_owned"], "CLI did not use an owned daemon")
+                marker = workspace / "record-owner.json"
+                require(marker.exists(), "isolated daemon did not persist its owner identity")
+                if seconds:
+                    require(other.exists(), "isolated child swept workspaces into its disposable registry")
+                    os.utime(marker, (time.time() - 172800,) * 2)
+                    e.stop()
+                    e.start()
+                    require(workspace.exists(), "startup removed a live aged workspace")
+                    require(not other.exists(), "main startup did not sweep the stale sentinel")
+                    require(process.wait(timeout=45) == 0, "normal record CLI failed")
+                    require(child.wait(10000) and child.exit_code() == 0, "normal daemon did not exit cleanly")
+                    require(not workspace.exists(), "normal take left its workspace behind")
+                    evidence["normal"] = {"owner": identity, "workspace_removed": True}
+                else:
+                    def committed():
+                        files = (private.rpc("status").get("live") or {}).get("files", [])
+                        return files if files and all((f.get("committed_seconds") or 0) >= 2 for f in files) else None
+                    saved = until(committed, 30, "isolated take durable fragments")
+                    killed = command(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False)
+                    require(killed.returncode in (0, 128), "could not terminate isolated tree")
+                    process.wait(timeout=10)
+                    require(child.wait(10000) and child.exit_code() != 0 and process.returncode != 0,
+                            "crash test did not terminate both CLI and daemon")
+                    require(read_json(marker) == identity, "stored owner identity differs from the actual process")
+                    crash = workspace
+                    evidence["crash"] = {"owner": identity, "committed": saved}
+            finally:
+                if process.poll() is None:
+                    command(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False)
+                    process.wait(timeout=10)
+                if child:
+                    child.close()
+    path = next(p for p in (e.root / "recordings").rglob("*.session.json")
+                if read_json(p)["status"] == "recording")
+    original = read_json(path)
+    require(len(original["files"]) == 1, "isolated fixture must have one program file")
+    movie = path.parent / original["files"][0]["path"]
+    marker = crash / "record-owner.json"
+    identity = read_json(marker)
+    # Keep young/dead, unmarked, malformed and in-workspace media safe. An
+    # unlocked copy tests the PID check independently of the owner's file lock.
+    live_pid = os.getpid()
+    live = WindowsChild(live_pid)
+    live_identity = {"pid": live_pid, "created": live.created()}
+    # Release only the handle, not this still-live harness process.
+    live.k32.CloseHandle(live.handle)
+    live.handle = None
+    def fixture(name, owner, old=True):
+        directory = temp / f"isocast-{name}"
+        directory.mkdir()
+        write_json(directory / "record-owner.json", owner)
+        if old:
+            os.utime(directory / "record-owner.json", (time.time() - 172800,) * 2)
+        return directory
+    young = fixture("young", identity, old=False)
+    reuse = fixture("reused-pid", dict(live_identity, created=live_identity["created"] - 1))
+    live_copy = fixture("live-copy", live_identity)
+    protected = fixture("media", identity)
+    (protected / "take.mp4").write_bytes(b"unrecovered media sentinel")
+    malformed = fixture("malformed", {"pid": "not a pid"})
+    unmarked = temp / "isocast-unmarked"
+    unmarked.mkdir()
+    (unmarked / "daemon.log").write_text("legacy workspace")
+    os.utime(marker, (time.time() - 172800,) * 2)
+    # Hide one committed movie temporarily: recovery must not authorize cleanup
+    # based only on a changed manifest status or an empty recovery result.
+    held = movie.with_suffix(".held")
+    movie.rename(held)
+    try:
+        e.stop()
+        e.start()
+        require(crash.exists(), "workspace removed despite unavailable committed media")
+        require(not reuse.exists(), "a reused live PID incorrectly protected a dead owner")
+        require(live_copy.exists(), "startup removed a workspace held by a live process identity")
+    finally:
+        held.rename(movie)
+    e.stop()
+    e.start()
+    require(not crash.exists(), "recovered day-old workspace was not removed")
+    require(all(p.exists() for p in (young, live_copy, protected, malformed, unmarked)),
+            "sweep removed a young/live/unknown/recording workspace")
+    require((protected / "take.mp4").read_bytes() == b"unrecovered media sentinel", "workspace media changed")
+    recovered = read_json(path)
+    require(recovered["status"] == "interrupted", "crashed take was not recovered")
+    require(any(Path(t["manifest"]) == path for t in e.rpc("status").get("interrupted", [])),
+            "workspace-only recovery was omitted from status")
+    file = recovered["files"][0]
+    info = probe(movie)
+    video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    require(int(video["nb_read_frames"]) == file["frames"] and file["frames"] > 0,
+            "recovered file and manifest frames disagree")
+    require(float(video["duration"]) + .001 >= evidence["crash"]["committed"][0]["committed_seconds"],
+            "cleanup lost committed recording media")
+    ffmpeg("-xerror", "-i", movie, "-map", "0", "-f", "null", "-")
+    digest = hashlib.sha256(movie.read_bytes()).hexdigest()
+    e.stop()
+    e.start()
+    require(hashlib.sha256(movie.read_bytes()).hexdigest() == digest and read_json(path) == recovered,
+            "repeated startup changed recovered media or metadata")
+    evidence["recovered"] = {"manifest": str(path), "frames": file["frames"], "sha256": digest,
+                              "workspace_removed": True, "recovery_failure_retained": True}
+
+
+def scenario_win_machine_profile(e, cfg, evidence):
+    """A real record child reads the main machine profile, but cannot write it."""
+    if not WINDOWS:
+        raise Skip("Windows isolated machine profile")
+    if os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted":
+        raise Skip("GitHub-hosted Windows jobs deny CREATE_BREAKAWAY_FROM_JOB (error 5), "
+                   "including the same-user Limited scheduled task; qualify on controlled Windows")
+    cfg = setup(e.root, "h264", width=320, height=180, fps=30)
+    identity = e.rpc("status")["daemon"]
+    machine = e.rpc("doctor", {"setup": cfg})["machine"]
+    # doctor enriches native().machine() with an encoder probe. Calibration's
+    # Windows machine identity is the cheap startup query, with an empty list.
+    machine["hardware_encoders"] = []
+    marker = f"e2e-117-{os.getpid()}"
+    profile = {"schema_version": 2, "measurement_version": 5,
+               "app_version": identity["version"], "app_build": identity["build"],
+               "measured_at": marker, "machine": machine, "seconds": 3.0,
+               "graphics": [], "skipped": [], "complete": True, "notes": [],
+               "memory_copy_bytes_per_second": 123456789.0, "disk_write_bytes_per_second": None,
+               "encoders": [{"codec": "prores422", "bit_depth": 8, "width": 1920,
+                   "height": 1080, "fps": 60, "sessions": 2, "frames": 300, "seconds": 1.0,
+                   "frames_per_second": 300.0, "resource": "recording_writer",
+                   "backend": "videotoolbox", "evidence": "prores_resource",
+                   "rate_control": "constant_quality", "quality": 70,
+                   "hardware_accelerated": True, "process_cpu_seconds_per_frame": 0.0001}]}
+    # Synthetic valid wire fixture, not a claim Windows measured ProRes. Reading
+    # both endpoints proves matching validation, not merely an inherited env var.
+    path = e.root / "setup.machine.json"
+    config = e.root / "record.json"
+    write_json(config, cfg)
+    temp = e.root / "temp"
+    temp.mkdir()
+    env = dict(e.env, ISOCAST_DAEMON=str(e.binary), TMP=str(temp), TEMP=str(temp))
+    private = copy.copy(e)
+    for label in ("valid", "wrong_build"):
+        if label == "wrong_build":
+            profile["app_build"] += "-other"
+        write_json(path, profile)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        e.stop()
+        e.start()
+        main = e.rpc("machine_profile")
+        require((main.get("profile") is not None) == (label == "valid"), "main profile fixture was not validated")
+        before = set(temp.glob("isocast-*"))
+        with (e.root / f"{label}-cli.out").open("wb") as out, (e.root / f"{label}-cli.err").open("wb") as err:
+            process = subprocess.Popen([str(e.binary.parent / "isocast.exe"), "record", str(config),
+                                        "--seconds", "4", "--json"], env=env, stdout=out, stderr=err, cwd=e.root)
+            try:
+                workspace = until(lambda: next(iter(set(temp.glob("isocast-*")) - before), None),
+                                  description="profile test workspace")
+                private.sock = workspace / "daemon.sock"
+                def loaded():
+                    require(process.poll() is None, "record CLI exited before profile check")
+                    try:
+                        return private.rpc("machine_profile")
+                    except (OSError, RpcError):
+                        return None
+                inherited = until(loaded, description="isolated machine profile")
+                require(inherited.get("profile") == main.get("profile"), "isolated daemon did not read the main profile")
+                if label == "valid":
+                    require(inherited["profile"]["measured_at"] == marker
+                            and inherited["profile"]["memory_copy_bytes_per_second"] == 123456789.0,
+                            "main machine-profile setting did not reach the child")
+                else:
+                    require("No valid machine profile for this build at" in inherited["summary"],
+                            "invalid inherited profile did not explain its fallback")
+                try:
+                    private.rpc("machine_calibrate")
+                except RpcError as exc:
+                    require(exc.error["code"] == -32001 and "only reads the machine profile" in str(exc),
+                            f"inherited profile was not protected read-only: {exc}")
+                else:
+                    raise Failure("isolated daemon allowed calibration of its parent's profile")
+                require(process.wait(timeout=45) == 0, "profile test recording failed")
+                evidence[label] = {"profile": inherited.get("profile"), "summary": inherited["summary"],
+                                   "parent_unchanged": hashlib.sha256(path.read_bytes()).hexdigest() == digest}
+                require(evidence[label]["parent_unchanged"], "isolated daemon modified the main profile")
+            finally:
+                if process.poll() is None:
+                    command(["taskkill", "/PID", str(process.pid), "/T", "/F"], check=False)
+                    process.wait(timeout=10)
+    require(not list(e.root.glob(".calibration-*")) and not path.with_suffix(".failed-build").exists(),
+            "isolated daemon wrote parent calibration state")
 
 
 def scenario_win_recovery(e, cfg, evidence):

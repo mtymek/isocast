@@ -983,6 +983,11 @@ type Output<F> = SyncSender<Packet<F>>;
 /// A frame or a chunk of audio on the session clock, on its way to a file
 /// or another output.
 pub enum Packet<F> {
+    /// A capture-reported hole on a file's audio track (host clock).
+    AudioGap {
+        from: Time,
+        until: Time,
+    },
     Video {
         frame: F,
         pts: Time,
@@ -2254,6 +2259,9 @@ fn annotate_interrupted_pauses(manifest: &mut SessionManifest) {
             .into(),
     );
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+pub use isocast_mux::recovery::recover_directory;
 
 /// Repair orphaned manifests only under the recording folder's exclusive
 /// lock. Probe durable media for duration; never infer frame/drop counts.
