@@ -131,6 +131,7 @@ SCENARIOS = (
     "win_scenes",
     "win_recovery",
     "win_preview_recording",
+    "win_app_audio",
     "win_monitor",
 )
 if sys.platform == "win32":
@@ -145,6 +146,7 @@ elif sys.platform.startswith("linux"):
         "linux_media",
         "linux_capture",
         "linux_browser",
+        "linux_shared_frames",
     )
 
 FPS = 60
@@ -4347,6 +4349,50 @@ def scenario_linux_media(e, cfg, evidence):
     evidence["t0"] = check_record_take(e, path, manifest, cfg, layout, count, evidence, isos=("a",))
 
 
+def scenario_linux_shared_frames(e, cfg, evidence):
+    """Linux local previews through shared memory (`frames --shared`, memfd
+    slots handed over with SCM_RIGHTS): the engine's readback, direct copy
+    and slot release, checked from the client's own mapping. Two viewers at
+    once (the program as drawn, and scaled to another width), each must get
+    whole pictures, never black or undrawn, and keep getting them after
+    every slot was used (slots come back), on one ring each."""
+    cli = os.environ.get("ISOCAST_E2E_CLI")
+    if not cli:
+        raise Skip("no isocast CLI (--cli) to watch shared frames")
+    w = cfg["canvas"]["width"]
+    e.apply(cfg)
+    e.rpc("engine", {"running": True})
+    time.sleep(1)
+    seconds = 6
+    viewers = [(width, subprocess.Popen(
+        [cli, "frames", "program", "--shared", "--check", "--width", str(width), "--fps", "30",
+         "--seconds", str(seconds), "--json"],
+        env=e.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        for width in (w, max(160, w // 2))]
+    results = {}
+    for width, process in viewers:
+        out, err = process.communicate(timeout=seconds + 30)
+        require(process.returncode == 0, f"frames --shared --width {width} failed: {err.strip()[-400:]}")
+        got = json.loads(out)
+        check = got.get("check") or {}
+        slots = got["slots"]
+        results[width] = {k: got.get(k) for k in ("transport", "width", "height", "slots", "frames", "fps",
+                                                  "lag_ms", "rings", "problems")}
+        results[width]["check"] = {k: check.get(k) for k in ("frames_read_back", "black_frames", "undrawn_frames")}
+        require(got["transport"] == "memfd-unix", f"transport {got['transport']!r}, not memfd-unix")
+        require(got["ok"] and got["ended"] is None, f"width {width}: {got['problems']} (ended: {got['ended']})")
+        require(check.get("black_frames") == 0 and check.get("undrawn_frames") == 0
+                and check.get("frames_read_back") == got["frames"],
+                f"width {width}: pictures read back from shared memory: {check}")
+        # Several times as many frames as slots: each slot came back and
+        # was drawn again, and the stream never stalled on held slots.
+        require(got["frames"] >= max(4 * slots, seconds * 5),
+                f"width {width}: {got['frames']} frames through {slots} slots in {seconds} s")
+        require(len(got["rings"]) == 1 and got["rings"][0]["width"] <= width,
+                f"width {width}: rings {got['rings']}")
+    evidence["shared_frames"] = results
+
+
 LINUX_CAPTURE_SECONDS = 15
 LINUX_CAPTURE_CANVAS = (480, 270)
 
@@ -4368,6 +4414,124 @@ def tone_amplitudes(path, stream, freqs=(440, 880), start=2, seconds=2):
         im = sum(x * math.sin(w * i) for i, x in enumerate(samples))
         out[f] = 2 * math.hypot(re_, im) / len(samples)
     return out
+
+
+def scenario_win_app_audio(e, cfg, evidence):
+    """Read-only listing everywhere; real capture only with explicit scratch
+    tone-player executables. Each player is a separate copy of ffplay, so its
+    stable executable id identifies one tone across PID changes. The existing
+    engine's ISO files need pictures: one test-pattern ISO carries the app;
+    the program carries desktop audio so both outputs stay independent."""
+    if not WINDOWS:
+        raise Skip("Windows only")
+    devices = e.rpc("devices")
+    apps = devices["audio_apps"]
+    evidence["listed_apps"] = len(apps)
+    for app in apps:
+        require(app.get("id") and app.get("binary") and app.get("name") and app["pid"] > 0,
+                f"invalid audio application identity: {app}")
+    players = [os.environ.get("ISOCAST_APP_TONE_PLAYER"), os.environ.get("ISOCAST_OTHER_TONE_PLAYER")]
+    if not all(players):
+        evidence["capture"] = "SKIP: no explicit scratch tone players; hosted Windows has no audio devices"
+        return
+    require(all(Path(p).is_file() for p in players) and players[0] != players[1],
+            "tone fixtures must be two distinct scratch ffplay executables")
+    seconds = int(os.environ.get("ISOCAST_APP_AUDIO_SECONDS", "120"))
+    require(seconds >= 20, "app audio qualification needs at least 20 seconds")
+    processes, logs = [], []
+
+    def start_player(index):
+        log = open(e.root / f"player-{index}-{len(processes)}.log", "wb")
+        logs.append(log)
+        process = subprocess.Popen([players[index], "-nodisp", "-autoexit", "-loglevel", "warning",
+                                    "-f", "lavfi", "-i", f"sine=frequency={440 if index == 0 else 880}:sample_rate=44100",
+                                    "-volume", "25"], stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+        processes.append(process)
+        return process
+
+    try:
+        # The selected application is deliberately absent when the source opens.
+        cfg["canvas"].update(width=480, height=270, fps=30)
+        for source in cfg["sources"]:
+            if source["kind"] == "test_pattern":
+                source.update(width=480, height=270, fps=30)
+        cfg["sources"] = [s for s in cfg["sources"] if s["id"] != "tone"]
+        cfg["sources"] += [{"id": "app", "kind": "application_audio", "app": str(Path(players[0]).resolve())},
+                           {"id": "desktop", "kind": "system_audio"}]
+        cfg["scenes"][0]["items"] = [item("bars", (0, 0, 1, 1), (480, 270))]
+        cfg["recording"]["program"].update(enabled=True, audio=["desktop"])
+        cfg["recording"]["iso"].update(enabled=True, sources=["bars"], audio=[],
+                                      source_audio={"bars": ["app"]})
+        e.apply(cfg)
+        e.rpc("engine", {"running": True})
+        start_player(1)
+        selected = start_player(0)
+
+        def listed_player():
+            return next((a for a in e.rpc("devices")["audio_apps"]
+                         if a.get("id", "").lower() == str(Path(players[0]).resolve()).lower()
+                         and a.get("pid") == selected.pid), None)
+
+        evidence["selected_app"] = until(listed_player, 15, "selected tone app listed")
+        time.sleep(2)
+        started = e.rpc("start", {"seconds": seconds})
+        time.sleep(seconds // 4)
+        # Suspend only our own fixture through Popen's pinned process handle:
+        # unlike a restart this leaves a live process that renders no audio.
+        import ctypes
+        native = ctypes.WinDLL("ntdll")
+        for function in (native.NtSuspendProcess, native.NtResumeProcess):
+            function.argtypes = [ctypes.c_void_p]
+            function.restype = ctypes.c_long
+        require(native.NtSuspendProcess(int(selected._handle)) >= 0, "could not pause tone fixture")
+        try:
+            time.sleep(2)
+        finally:
+            require(native.NtResumeProcess(int(selected._handle)) >= 0, "could not resume tone fixture")
+        evidence["live_pause_seconds"] = 2
+        time.sleep(seconds // 2 - seconds // 4 - 2)
+        old_pid = selected.pid
+        selected.terminate()
+        selected.wait(timeout=5)
+        time.sleep(1)
+        selected = start_player(0)
+        evidence["restart"] = {"before_pid": old_pid, "after_pid": selected.pid}
+        evidence["restarted_app"] = until(listed_player, 15, "restarted tone app listed")
+        path = Path(started["manifest"])
+        manifest = until(lambda: finished(path), seconds + 35, "app-audio take finalized")
+        evidence["files"] = check_take(path, manifest, seconds, expected_sources=["program", "bars"], evidence=evidence)
+        loss = {f["source"]: {k: f.get(k, 0) for k in ("dropped_frames", "repeated_frames", "audio_dropouts")}
+                for f in manifest["files"]}
+        evidence["loss"] = loss
+        require(not any(v for counters in loss.values() for v in counters.values()), f"app audio loss: {loss}")
+        app_file, _ = manifest_file(path, manifest, "bars")
+        desktop_file, _ = manifest_file(path, manifest, "program")
+        spectra = {}
+        for label, at in (("before", 3), ("resumed", seconds // 4 + 3), ("after", seconds // 2 + 5)):
+            own = tone_amplitudes(app_file, 0, start=at)
+            desktop = tone_amplitudes(desktop_file, 0, start=at)
+            spectra[label] = {"app": own, "desktop": desktop}
+            require(own[440] > 0.001 and own[880] < own[440] * 0.01,
+                    f"{label}: app ISO must contain 440Hz with 880Hz at least 40dB down: {own}")
+            require(desktop[440] > 0.001 and desktop[880] > 0.001,
+                    f"{label}: desktop program must contain both tones: {desktop}")
+        evidence["tone_amplitudes"] = spectra
+        paused = tone_amplitudes(app_file, 0, start=seconds // 4 + 0.5, seconds=1)
+        evidence["paused_tone_amplitudes"] = paused
+        require(paused[440] < spectra["before"]["app"][440] * 0.01,
+                f"live suspended app must become silent without ending the source: {paused}")
+        require(selected.poll() is None, "restarted tone player exited before qualification ended")
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+        for log in logs:
+            log.close()
 
 
 def scenario_linux_capture(e, cfg, evidence):

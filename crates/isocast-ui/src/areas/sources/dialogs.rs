@@ -200,7 +200,14 @@ fn iso_depth_group(
     }
     let screen = matches!(kind, "display" | "window" | "application");
     let no_ten = if codec == Codec::H264 {
-        Some("H.264 ISO files are 8-bit only; choose HEVC in Settings → Recording for 10-bit.")
+        // A Linux engine has no HEVC to choose.
+        Some(
+            if crate::engine::os() == isocast_protocol::hello::EngineOs::Linux {
+                "H.264 ISO files are 8-bit only."
+            } else {
+                "H.264 ISO files are 8-bit only; choose HEVC in Settings → Recording for 10-bit."
+            },
+        )
     } else if screen && !crate::areas::settings::engine_is_mac() {
         Some("This engine captures screens in 8 bits only.")
     } else {
@@ -1741,6 +1748,8 @@ impl Dialogs {
         area.set_transform_w(w as f32);
         area.set_transform_h(h as f32);
         area.set_transform_rotate(n(&t["rotate"], 0.0) as f32);
+        area.set_transform_flip_horizontal(t["flip_horizontal"] == true);
+        area.set_transform_flip_vertical(t["flip_vertical"] == true);
         area.set_transform_scale(((n(&t["scale"], 1.0) * 1000.0).round() / 10.0) as f32);
         area.set_transform_fit(item["fit"].as_str().unwrap_or("stretch").into());
         area.set_transform_align(item["align"].as_str().unwrap_or("center").into());
@@ -1913,6 +1922,11 @@ impl Dialogs {
         let fields = match action {
             "reset" => {
                 items::reset_transform(app);
+                return;
+            }
+            "flip-horizontal" | "flip-vertical" => {
+                items::flip(app, &action.replace('-', "_"));
+                self.show_transform(app, window);
                 return;
             }
             "add-border" => json!({ "style": { "border": { "width": 4, "color": "#eeeae2" } } }),
