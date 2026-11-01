@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 600" width="1100" height="600">
+  <style>
+    .bg{fill:#f5f3ee}
+    .card{fill:#fffdf8;stroke:#d8d3c8;stroke-width:1.5}
+    .box{fill:#fffdf8;stroke:#d8d3c8;stroke-width:1.5}
+    .box.hot{stroke:#2c67cf;stroke-width:2}
+    .box.new{stroke:#c98a12;stroke-width:2}
+    .daemon{fill:#ece8de;stroke:#1c1e23;stroke-width:2}
+    .zone{fill:#ece8de;stroke:#62666f;stroke-width:1.5;stroke-dasharray:6 5}
+    .t-k{font:600 11px 'JetBrains Mono',monospace;letter-spacing:1.2px;fill:#d9363e}
+    .t-h{font:600 26px 'Noto Serif',serif;fill:#1c1e23}
+    .t-l{font:700 18px 'Noto Serif',serif;fill:#1c1e23}
+    .t-m{font:600 14px 'Noto Sans',sans-serif;fill:#1c1e23}
+    .t-s{font:12px 'Noto Sans',sans-serif;fill:#62666f}
+    .t-c{font:11px 'JetBrains Mono',monospace;fill:#62666f}
+    .t-w{font:600 11.5px 'JetBrains Mono',monospace}
+    .wire{fill:none;stroke-width:2.5}
+    .b{stroke:#2c67cf}
+    .a{stroke:#c98a12}
+    .g{stroke:#2b9a57}
+    .v{stroke:#7556cf}
+    .dash{stroke-dasharray:6 5}
+    .n{font:700 12px 'Noto Sans',sans-serif;fill:#fffdf8;text-anchor:middle}
+  </style>
+  <defs>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#2c67cf"/></marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#c98a12"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#2b9a57"/></marker>
+    <marker id="av" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#7556cf"/></marker>
+  </defs>
+  <rect class="bg" width="1100" height="600"/>
+  <rect class="card" x="10" y="10" width="1080" height="580" rx="14"/>
+
+  <text class="t-k" x="36" y="44">LINUX GLOBAL HOTKEYS</text>
+  <text class="t-h" x="36" y="76">A change returns at once; the portal binds in the background</text>
+
+  <!-- clients -->
+  <rect class="box" x="36" y="120" width="170" height="44" rx="8"/><text class="t-m" x="50" y="139">Isocast.app</text><text class="t-s" x="50" y="155">Settings → Hotkeys</text>
+  <rect class="box" x="36" y="176" width="170" height="44" rx="8"/><text class="t-m" x="50" y="195">isocast hotkeys</text><text class="t-s" x="50" y="211">set · list · input</text>
+  <rect class="box" x="36" y="232" width="170" height="44" rx="8"/><text class="t-m" x="50" y="251">isocast mcp</text><text class="t-s" x="50" y="267">hotkeys_set · hotkeys_get</text>
+  <text class="t-c" x="36" y="300">clients</text>
+
+  <!-- daemon -->
+  <rect class="daemon" x="260" y="100" width="300" height="440" rx="14"/>
+  <text class="t-l" x="280" y="130">isocastd</text>
+  <text class="t-s" x="362" y="130">daemon</text>
+  <rect class="box hot" x="278" y="148" width="264" height="62" rx="7"/>
+  <text class="t-m" x="292" y="170">refresh_hotkeys</text>
+  <text class="t-s" x="292" y="187">new generation N · stores "waiting"</text>
+  <text class="t-s" x="292" y="202">no longer waits for the portal</text>
+  <rect class="box" x="278" y="224" width="264" height="78" rx="7"/>
+  <text class="t-m" x="292" y="246">Registered · read by hotkeys_get</text>
+  <text class="t-s" x="292" y="263">registrations · warnings</text>
+  <text class="t-s" x="292" y="279">pending stays false on Linux,</text>
+  <text class="t-s" x="292" y="294">so focused input keeps working</text>
+  <rect class="box new" x="278" y="316" width="264" height="62" rx="7"/>
+  <text class="t-m" x="292" y="338">settle_hotkeys(N)</text>
+  <text class="t-s" x="292" y="355">kept only if N is still current</text>
+  <text class="t-s" x="292" y="370">publishes the answer's warnings</text>
+  <rect class="box" x="278" y="392" width="264" height="62" rx="7"/>
+  <text class="t-m" x="292" y="414">Hotkey actions</text>
+  <text class="t-s" x="292" y="431">press and release edges of generation N</text>
+  <text class="t-s" x="292" y="446">focused and global, de-duplicated</text>
+  <text class="t-c" x="280" y="480">studio.toggle · recording.toggle</text>
+  <text class="t-c" x="280" y="496">scene.switch · marker.add …</text>
+
+  <!-- runtime -->
+  <rect class="zone" x="610" y="100" width="220" height="440" rx="14"/>
+  <text class="t-l" x="628" y="130">Hotkey runtime</text>
+  <text class="t-s" x="628" y="148">LinuxHotkeys · one tokio thread</text>
+  <rect class="box hot" x="626" y="164" width="188" height="56" rx="7"/>
+  <text class="t-m" x="640" y="186">replace()</text>
+  <text class="t-s" x="640" y="204">returns at once</text>
+  <rect class="box new" x="626" y="236" width="188" height="100" rx="7"/>
+  <text class="t-m" x="640" y="258">registration task</text>
+  <text class="t-s" x="640" y="276">aborts the one in flight</text>
+  <text class="t-s" x="640" y="292">closes the old session</text>
+  <text class="t-s" x="640" y="308">calls done(registrations)</text>
+  <text class="t-s" x="640" y="323">unless replaced</text>
+  <rect class="box" x="626" y="392" width="188" height="62" rx="7"/>
+  <text class="t-m" x="640" y="414">session listener</text>
+  <text class="t-s" x="640" y="431">Activated → press</text>
+  <text class="t-s" x="640" y="446">Deactivated → release</text>
+
+  <!-- portal + desktop -->
+  <rect class="box" x="880" y="100" width="190" height="226" rx="12"/>
+  <text class="t-m" x="896" y="126">xdg-desktop-portal</text>
+  <text class="t-c" x="896" y="156">Registry.Register</text><text class="t-s" x="896" y="172">app id · 5 s</text>
+  <text class="t-c" x="896" y="200">CreateSession</text><text class="t-s" x="896" y="216">5 s</text>
+  <text class="t-c" x="896" y="244">BindShortcuts</text><text class="t-s" x="896" y="260">chords as preferred</text><text class="t-s" x="896" y="275">triggers · 30 s (dialog)</text>
+  <text class="t-c" x="896" y="304">dev.isocast.Isocast</text>
+  <rect class="box" x="880" y="372" width="190" height="96" rx="12"/>
+  <text class="t-m" x="896" y="398">Desktop</text>
+  <text class="t-s" x="896" y="417">Hyprland: keys from its config</text>
+  <text class="t-s" x="896" y="434">GNOME, KDE: may ask</text>
+  <text class="t-s" x="896" y="451">the person in a dialog</text>
+
+  <!-- 1: client -> refresh -->
+  <path class="wire b" d="M206,198 C236,198 240,178 276,178" marker-end="url(#ab)"/>
+  <!-- 2: refresh -> replace -->
+  <path class="wire b" d="M542,178 C580,178 590,190 624,190" marker-end="url(#ab)"/>
+  <!-- 3: reply waiting back to client -->
+  <path class="wire b dash" d="M278,262 C240,262 236,256 208,256" marker-end="url(#ab)"/>
+  <!-- 4: task <-> portal -->
+  <path class="wire a" d="M814,268 C850,268 850,214 878,214" marker-end="url(#aa)"/>
+  <path class="wire a" d="M878,250 C850,250 850,300 816,300" marker-end="url(#aa)"/>
+  <path class="wire a dash" d="M975,326 L975,370" marker-end="url(#aa)"/>
+  <!-- 5: done -> settle -->
+  <path class="wire a" d="M626,326 C590,326 580,346 544,346" marker-end="url(#aa)"/>
+  <!-- 6: key press -->
+  <path class="wire g" d="M880,440 C850,440 846,422 816,422" marker-end="url(#ag)"/>
+  <path class="wire g" d="M626,422 L544,422" marker-end="url(#ag)"/>
+
+  <!-- step badges -->
+  <circle cx="240" cy="188" r="10" fill="#2c67cf"/><text class="n" x="240" y="192">1</text>
+  <circle cx="584" cy="183" r="10" fill="#2c67cf"/><text class="n" x="584" y="187">2</text>
+  <circle cx="240" cy="259" r="10" fill="#2c67cf"/><text class="n" x="240" y="263">3</text>
+  <circle cx="848" cy="240" r="10" fill="#c98a12"/><text class="n" x="848" y="244">4</text>
+  <circle cx="584" cy="336" r="10" fill="#c98a12"/><text class="n" x="584" y="340">5</text>
+  <circle cx="848" cy="431" r="10" fill="#2b9a57"/><text class="n" x="848" y="435">6</text>
+
+  <!-- legend -->
+  <g transform="translate(36,330)">
+    <text class="t-w" x="0" y="0" fill="#2c67cf">1 hotkeys_set</text>
+    <text class="t-w" x="0" y="20" fill="#2c67cf">2 replace(keys, N, done)</text>
+    <text class="t-w" x="0" y="40" fill="#2c67cf">3 reply in 0.01 s:</text>
+    <text class="t-c" x="16" y="56">global false,</text>
+    <text class="t-c" x="16" y="70">"waiting for the desktop…"</text>
+    <text class="t-w" x="0" y="96" fill="#c98a12">4 Register · CreateSession</text>
+    <text class="t-w" x="16" y="112" fill="#c98a12">· BindShortcuts</text>
+    <text class="t-w" x="0" y="132" fill="#c98a12">5 done → settle_hotkeys(N)</text>
+    <text class="t-w" x="0" y="152" fill="#2b9a57">6 key press → edges</text>
+    <text class="t-w" x="16" y="168" fill="#2b9a57">→ action</text>
+  </g>
+  <text class="t-c" x="36" y="568">blue: the request, served at once · amber: background binding, every step time-limited · green: a key press</text>
+</svg>

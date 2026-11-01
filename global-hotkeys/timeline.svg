@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 560" width="1100" height="560">
+  <style>
+    .bg{fill:#f5f3ee}
+    .card{fill:#fffdf8;stroke:#d8d3c8;stroke-width:1.5}
+    .t-k{font:600 11px 'JetBrains Mono',monospace;letter-spacing:1.2px;fill:#d9363e}
+    .t-h{font:600 26px 'Noto Serif',serif;fill:#1c1e23}
+    .t-l{font:700 17px 'Noto Serif',serif;fill:#1c1e23}
+    .t-m{font:600 13.5px 'Noto Sans',sans-serif;fill:#1c1e23}
+    .t-s{font:12px 'Noto Sans',sans-serif;fill:#62666f}
+    .t-c{font:11px 'JetBrains Mono',monospace;fill:#62666f}
+    .t-in{font:600 12px 'Noto Sans',sans-serif;fill:#fffdf8}
+    .lane{fill:#ece8de}
+    .axis{stroke:#d8d3c8;stroke-width:1}
+    .grid{stroke:#d8d3c8;stroke-width:1;stroke-dasharray:3 4}
+  </style>
+  <defs>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#d9363e" opacity=".14"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#d9363e" stroke-width="3" opacity=".35"/>
+    </pattern>
+    <pattern id="hatchA" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#c98a12" opacity=".12"/>
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#c98a12" stroke-width="3" opacity=".35"/>
+    </pattern>
+  </defs>
+  <rect class="bg" width="1100" height="560"/>
+  <rect class="card" x="10" y="10" width="1080" height="540" rx="14"/>
+  <text class="t-k" x="36" y="44">ONE HOTKEY CHANGE, TIME FROM THE REQUEST</text>
+  <text class="t-h" x="36" y="76">Before, the daemon waited for the portal; now it does not</text>
+
+  <!-- axis: x = 250 + s * 22.5 (0..36 s) -->
+  <g>
+    <line class="grid" x1="250" y1="104" x2="250" y2="500"/>
+    <line class="grid" x1="362.5" y1="104" x2="362.5" y2="500"/>
+    <line class="grid" x1="475" y1="104" x2="475" y2="500"/>
+    <line class="grid" x1="587.5" y1="104" x2="587.5" y2="500"/>
+    <line class="grid" x1="700" y1="104" x2="700" y2="500"/>
+    <line class="grid" x1="812.5" y1="104" x2="812.5" y2="500"/>
+    <line class="grid" x1="925" y1="104" x2="925" y2="500"/>
+    <line class="grid" x1="1037.5" y1="104" x2="1037.5" y2="500"/>
+    <line class="axis" x1="250" y1="500" x2="1060" y2="500"/>
+    <text class="t-c" x="250" y="518" text-anchor="middle">0 s</text>
+    <text class="t-c" x="362.5" y="518" text-anchor="middle">5 s</text>
+    <text class="t-c" x="475" y="518" text-anchor="middle">10 s</text>
+    <text class="t-c" x="587.5" y="518" text-anchor="middle">15 s</text>
+    <text class="t-c" x="700" y="518" text-anchor="middle">20 s</text>
+    <text class="t-c" x="812.5" y="518" text-anchor="middle">25 s</text>
+    <text class="t-c" x="925" y="518" text-anchor="middle">30 s</text>
+    <text class="t-c" x="1037.5" y="518" text-anchor="middle">35 s</text>
+  </g>
+
+  <!-- BEFORE -->
+  <text class="t-l" x="36" y="122">Before</text>
+  <text class="t-c" x="100" y="122">8a04487e alone</text>
+
+  <rect class="lane" x="36" y="136" width="1024" height="40" rx="6"/>
+  <text class="t-m" x="50" y="153">hotkeys set reply</text>
+  <text class="t-s" x="50" y="169">daemon start: as long</text>
+  <rect x="250" y="142" width="112.5" height="28" rx="4" fill="#d9363e"/>
+  <text class="t-in" x="258" y="161">5.0 s, measured</text>
+  <rect x="362.5" y="142" width="675" height="28" rx="4" fill="url(#hatch)"/>
+  <text class="t-s" x="374" y="161" fill="#1c1e23">portal silent; up to 35 s while a GNOME or KDE dialog is open (5 s + 30 s limits)</text>
+
+  <rect class="lane" x="36" y="184" width="1024" height="40" rx="6"/>
+  <text class="t-m" x="50" y="201">other clients'</text>
+  <text class="t-s" x="50" y="217">setup changes</text>
+  <rect x="250" y="190" width="787.5" height="28" rx="4" fill="url(#hatch)"/>
+  <text class="t-s" x="262" y="209" fill="#1c1e23">wait on the hotkey refresh lock for as long</text>
+
+  <rect class="lane" x="36" y="232" width="1024" height="40" rx="6"/>
+  <text class="t-m" x="50" y="249">focused input</text>
+  <text class="t-s" x="50" y="265">hotkeys input</text>
+  <rect x="250" y="238" width="787.5" height="28" rx="4" fill="url(#hatch)"/>
+  <text class="t-s" x="262" y="257" fill="#1c1e23">refused: "registration update in progress; retry after it completes"</text>
+
+  <!-- AFTER -->
+  <text class="t-l" x="36" y="318">After</text>
+  <text class="t-c" x="92" y="318">with the background binding commit</text>
+
+  <rect class="lane" x="36" y="332" width="1024" height="40" rx="6"/>
+  <text class="t-m" x="50" y="349">hotkeys set reply</text>
+  <text class="t-s" x="50" y="365">and daemon start</text>
+  <rect x="250" y="338" width="4" height="28" rx="1" fill="#2c67cf"/>
+  <text class="t-s" x="262" y="357" fill="#1c1e23">0.01 s (start: first reply 0.06 s), every binding "waiting"</text>
+
+  <rect class="lane" x="36" y="380" width="1024" height="40" rx="6"/>
+  <text class="t-m" x="50" y="397">focused input</text>
+  <text class="t-s" x="50" y="413">hotkeys input</text>
+  <rect x="250" y="386" width="787.5" height="28" rx="4" fill="#2b9a57" opacity=".85"/>
+  <text class="t-in" x="262" y="405">works the whole time</text>
+
+  <rect class="lane" x="36" y="428" width="1024" height="64" rx="6"/>
+  <text class="t-m" x="50" y="445">portal binding</text>
+  <text class="t-s" x="50" y="461">in the background</text>
+  <rect x="250" y="434" width="4" height="24" rx="1" fill="#2b9a57"/>
+  <text class="t-s" x="262" y="451" fill="#1c1e23">Hyprland: global within 0.1 s</text>
+  <rect x="250" y="462" width="112.5" height="24" rx="4" fill="#c98a12"/>
+  <text class="t-in" x="258" y="479">portal silent</text>
+  <text class="t-s" x="372" y="479" fill="#1c1e23">→ focused only at 5.0 s, reason in the warning</text>
+  <rect x="660" y="462" width="377.5" height="24" rx="4" fill="url(#hatchA)"/>
+  <text class="t-s" x="670" y="479" fill="#1c1e23">a dialog may take up to 35 s</text>
+
+  <text class="t-c" x="36" y="540">measured on Omarchy with scratch daemons; 35 s is the sum of the step limits, not a measurement</text>
+</svg>
