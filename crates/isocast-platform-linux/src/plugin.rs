@@ -372,6 +372,75 @@ mod tests {
     }
 
     #[test]
+    fn file_rules_keep_only_file_rights() {
+        assert_eq!(
+            rule_access(ACCESS_FS_WRITE | ACCESS_FS_EXECUTE, false),
+            ACCESS_FS_READ_FILE | ACCESS_FS_WRITE_FILE | ACCESS_FS_TRUNCATE | ACCESS_FS_EXECUTE
+        );
+        assert_eq!(rule_access(ACCESS_FS_READ, false), ACCESS_FS_READ_FILE);
+        assert_eq!(rule_access(ACCESS_FS_WRITE, true), ACCESS_FS_WRITE);
+    }
+
+    #[test]
+    fn network_is_denied_without_a_grant() {
+        assert_eq!(
+            handled_net(false),
+            ACCESS_NET_CONNECT_TCP | ACCESS_NET_CONNECT_SEND_UDP
+        );
+        assert_eq!(handled_net(true), 0);
+    }
+
+    #[test]
+    fn every_right_up_to_abi_10_is_handled() {
+        for right in [
+            ACCESS_FS_EXECUTE,
+            ACCESS_FS_WRITE_FILE,
+            ACCESS_FS_READ_FILE,
+            ACCESS_FS_READ_DIR,
+            ACCESS_FS_REMOVE_DIR,
+            ACCESS_FS_REMOVE_FILE,
+            ACCESS_FS_MAKE_DIR,
+            ACCESS_FS_MAKE_REG,
+            ACCESS_FS_MAKE_SOCK,
+            ACCESS_FS_MAKE_FIFO,
+            ACCESS_FS_MAKE_SYM,
+            ACCESS_FS_REFER,
+            ACCESS_FS_TRUNCATE,
+            ACCESS_FS_IOCTL_DEV,
+            ACCESS_FS_RESOLVE_UNIX,
+        ] {
+            assert_eq!(ACCESS_FS_ALL & right, right);
+        }
+    }
+
+    #[test]
+    fn paths_that_do_not_exist_are_left_out() {
+        if abi() < MIN_ABI {
+            eprintln!("skipped: Landlock ABI {}", abi());
+            return;
+        }
+        let sandbox = Sandbox {
+            readable: vec![PathBuf::from("/nonexistent/isocast-test")],
+            writable: vec![PathBuf::from("/nonexistent/isocast-test/data")],
+            socket: PathBuf::from("/nonexistent/isocast-test/socket"),
+            ..Sandbox::default()
+        };
+        sandbox
+            .ruleset()
+            .expect("a ruleset without the missing paths");
+    }
+
+    #[test]
+    fn granted_files_resolve_against_home() {
+        let home = Path::new("/home/someone");
+        assert_eq!(
+            expand_home("~/notes.txt", home),
+            PathBuf::from("/home/someone/notes.txt")
+        );
+        assert_eq!(expand_home("/etc/hosts", home), PathBuf::from("/etc/hosts"));
+    }
+
+    #[test]
     fn this_process_has_an_identity() {
         let (parent, (started, _)) = process_info(std::process::id()).expect("own /proc stat");
         assert!(parent > 0);
