@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 600" width="1100" height="600">
+  <style>
+    .bg{fill:#f5f3ee}
+    .card{fill:#fffdf8;stroke:#d8d3c8;stroke-width:1.5}
+    .box{fill:#fffdf8;stroke:#d8d3c8;stroke-width:1.5}
+    .daemon{fill:#ece8de;stroke:#1c1e23;stroke-width:2}
+    .t-k{font:600 11px 'JetBrains Mono',monospace;letter-spacing:1.2px;fill:#d9363e}
+    .t-h{font:600 26px 'Noto Serif',serif;fill:#1c1e23}
+    .t-l{font:700 18px 'Noto Serif',serif;fill:#1c1e23}
+    .t-m{font:600 14px 'Noto Sans',sans-serif;fill:#1c1e23}
+    .t-s{font:12.5px 'Noto Sans',sans-serif;fill:#62666f}
+    .t-c{font:11.5px 'JetBrains Mono',monospace;fill:#62666f}
+    .t-w{font:600 12.5px 'Noto Sans',sans-serif}
+    .wire{fill:none;stroke-width:2.5}
+    .a{stroke:#c98a12}
+    .g{stroke:#2b9a57}
+    .n{font:700 12px 'Noto Sans',sans-serif;fill:#fffdf8;text-anchor:middle}
+    .pill{stroke-width:1.5}
+  </style>
+  <defs>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#c98a12"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="#2b9a57"/></marker>
+  </defs>
+  <rect class="bg" width="1100" height="600"/>
+  <rect class="card" x="10" y="10" width="1080" height="580" rx="14"/>
+
+  <text class="t-k" x="36" y="44">GLOBAL HOTKEYS ON LINUX</text>
+  <text class="t-h" x="36" y="76">The desktop owns the keys; Isocast asks for them and gets the presses</text>
+
+  <!-- columns -->
+  <rect class="box" x="36" y="112" width="190" height="150" rx="12"/>
+  <text class="t-l" x="52" y="140">You</text>
+  <text class="t-s" x="52" y="164">Isocast.app: Settings</text>
+  <text class="t-c" x="52" y="186">isocast hotkeys set</text>
+  <text class="t-c" x="52" y="204">MCP hotkeys_set</text>
+  <text class="t-s" x="52" y="232">e.g. studio = Ctrl+Alt+F13</text>
+  <text class="t-s" x="52" y="249">→ studio.toggle</text>
+
+  <rect class="daemon" x="296" y="112" width="240" height="150" rx="14"/>
+  <text class="t-l" x="314" y="140">isocastd</text>
+  <text class="t-s" x="314" y="164">saves the binding in the profile</text>
+  <text class="t-s" x="314" y="182">answers at once: until the desktop</text>
+  <text class="t-s" x="314" y="200">answers, the key works only while</text>
+  <text class="t-s" x="314" y="218">Isocast has focus</text>
+  <text class="t-s" x="314" y="244">runs the action on each press</text>
+
+  <rect class="box" x="606" y="112" width="210" height="150" rx="12"/>
+  <text class="t-l" x="622" y="140">Desktop portal</text>
+  <text class="t-s" x="622" y="160">xdg-desktop-portal</text>
+  <text class="t-c" x="622" y="186">GlobalShortcuts</text>
+  <text class="t-s" x="622" y="206">app id dev.isocast.Isocast</text>
+  <text class="t-s" x="622" y="224">(needs its desktop entry)</text>
+
+  <rect class="box" x="886" y="112" width="178" height="150" rx="12"/>
+  <text class="t-l" x="902" y="140">Compositor</text>
+  <text class="t-s" x="902" y="164">decides the actual keys</text>
+  <text class="t-s" x="902" y="190">Hyprland: a global bind</text>
+  <text class="t-s" x="902" y="207">in hyprland.conf</text>
+  <text class="t-s" x="902" y="233">GNOME, KDE: may ask</text>
+  <text class="t-s" x="902" y="250">you in a dialog</text>
+
+  <!-- binding lane (amber), above boxes -> drawn as arrows between boxes at y=150 -->
+  <path class="wire a" d="M226,150 L294,150" marker-end="url(#aa)"/>
+  <path class="wire a" d="M536,150 L604,150" marker-end="url(#aa)"/>
+  <path class="wire a" d="M816,150 L884,150" marker-end="url(#aa)"/>
+  <circle cx="260" cy="150" r="10" fill="#c98a12"/><text class="n" x="260" y="154">1</text>
+  <circle cx="570" cy="150" r="10" fill="#c98a12"/><text class="n" x="570" y="154">2</text>
+  <circle cx="850" cy="150" r="10" fill="#c98a12"/><text class="n" x="850" y="154">3</text>
+
+  <!-- press lane (green) -->
+  <path class="wire g" d="M884,236 L818,236" marker-end="url(#ag)"/>
+  <path class="wire g" d="M604,236 L538,236" marker-end="url(#ag)"/>
+  <circle cx="850" cy="236" r="10" fill="#2b9a57"/><text class="n" x="850" y="240">4</text>
+  <circle cx="570" cy="236" r="10" fill="#2b9a57"/><text class="n" x="570" y="240">5</text>
+
+  <!-- steps -->
+  <g transform="translate(36,300)">
+    <text class="t-w" x="0" y="0" fill="#c98a12">1  You set a hotkey.</text>
+    <text class="t-w" x="0" y="24" fill="#c98a12">2  isocastd asks the portal to bind it, with your chord as the preferred keys.</text>
+    <text class="t-w" x="0" y="48" fill="#c98a12">3  The portal asks the compositor, which keeps, changes or asks about the keys.</text>
+    <text class="t-w" x="0" y="72" fill="#2b9a57">4  You press the keys anywhere: the compositor tells the portal.</text>
+    <text class="t-w" x="0" y="96" fill="#2b9a57">5  The portal sends a press and a release to isocastd, which runs the action.</text>
+  </g>
+
+  <!-- states -->
+  <text class="t-l" x="36" y="440">What each binding reports</text>
+  <text class="t-s" x="290" y="440">hotkeys list, hotkeys_get, the app's Hotkeys settings</text>
+
+  <rect class="pill" x="36" y="458" width="240" height="84" rx="10" fill="#fffdf8" stroke="#62666f"/>
+  <text class="t-m" x="52" y="482">Waiting</text>
+  <text class="t-c" x="52" y="502">global: false</text>
+  <text class="t-s" x="52" y="524">the desktop has not answered</text>
+
+  <rect class="pill" x="296" y="458" width="240" height="84" rx="10" fill="#fffdf8" stroke="#2b9a57"/>
+  <text class="t-m" x="312" y="482">Global</text>
+  <text class="t-c" x="312" y="502">global: true</text>
+  <text class="t-s" x="312" y="524">works from any app</text>
+
+  <rect class="pill" x="556" y="458" width="240" height="84" rx="10" fill="#fffdf8" stroke="#c98a12"/>
+  <text class="t-m" x="572" y="482">Global, no keys yet</text>
+  <text class="t-c" x="572" y="502">global: true + a note</text>
+  <text class="t-s" x="572" y="524">assign keys in the desktop</text>
+
+  <rect class="pill" x="816" y="458" width="248" height="84" rx="10" fill="#fffdf8" stroke="#d9363e"/>
+  <text class="t-m" x="832" y="482">Focused only</text>
+  <text class="t-c" x="832" y="502">global: false + the reason</text>
+  <text class="t-s" x="832" y="524">no portal, or no answer in time</text>
+
+  <text class="t-c" x="36" y="568">Waiting lasts until the portal answers: at most 5 s per step, 30 s while a dialog is open. Focused input works in every state.</text>
+</svg>
