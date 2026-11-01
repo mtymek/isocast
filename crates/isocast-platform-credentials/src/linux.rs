@@ -390,11 +390,42 @@ const KEYRING_CALL: Duration = Duration::from_secs(5);
 /// How long an unlock prompt on the desktop waits for the person.
 const KEYRING_PROMPT: Duration = Duration::from_secs(120);
 
+/// After the keyring fails to answer, it is skipped for this long, so
+/// callers that run often (stream status) don't wait on it each time.
+const KEYRING_BACKOFF: Duration = Duration::from_secs(60);
+/// When the keyring last failed to answer.
+static KEYRING_DOWN: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+/// A Secret Service call that ran out of time.
+#[derive(Debug)]
+struct KeyringTimeout;
+
+impl std::fmt::Display for KeyringTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("keyring: the Secret Service did not answer within 5 seconds")
+    }
+}
+
+impl std::error::Error for KeyringTimeout {}
+
 async fn timed<T>(future: impl Future<Output = zbus::Result<T>>) -> Result<T> {
     tokio::time::timeout(KEYRING_CALL, future)
         .await
-        .context("keyring: the Secret Service did not answer within 5 seconds")?
+        .map_err(|_| anyhow::Error::new(KeyringTimeout))?
         .map_err(Into::into)
+}
+
+fn keyring_backing_off() -> bool {
+    let down = KEYRING_DOWN
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    down.is_some_and(|at| at.elapsed() < KEYRING_BACKOFF)
+}
+
+fn set_keyring_down(down: bool) {
+    *KEYRING_DOWN
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner()) = down.then(Instant::now);
 }
 
 // Keep the wire types visible at each call, without serde bounds, as the
@@ -654,8 +685,26 @@ fn attributes<'a>(service: &'a str, account: &'a str) -> HashMap<&'a str, &'a st
 
 /// Runs `f` against the desktop keyring on a thread and runtime of its own
 /// (callers may already be on a runtime). None when no Secret Service answers
-/// on the session bus.
+/// on the session bus, when a call to it times out, and for
+/// [`KEYRING_BACKOFF`] after either; callers then use the files.
 fn with_keyring<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> Result<Option<T>> {
+    if keyring_backing_off() {
+        return Ok(None);
+    }
+    let result = keyring_call(f);
+    match &result {
+        Ok(None) => set_keyring_down(true),
+        Ok(Some(_)) => set_keyring_down(false),
+        Err(error) if error.chain().any(|cause| cause.is::<KeyringTimeout>()) => {
+            set_keyring_down(true);
+            return Ok(None);
+        }
+        Err(_) => {}
+    }
+    result
+}
+
+fn keyring_call<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> Result<Option<T>> {
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
