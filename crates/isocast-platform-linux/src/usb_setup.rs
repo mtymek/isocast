@@ -1,32 +1,27 @@
 //! One stream setup at a time per USB device.
 //!
-//! A webcam's camera and microphone are interfaces of one USB device. When
-//! a V4L2 format/STREAMON negotiation and a USB audio start reach the same
-//! device together, some firmware (Logitech BRIO, 046d:085e) stops answering
-//! control requests and drops off the bus: STREAMON fails with EPROTO and the
-//! kernel logs "USB disconnect". Sources open on parallel threads, so the
-//! camera and the microphone of one webcam start within microseconds.
-//! Serializing their setup on the shared USB device avoids it; streaming
-//! itself runs concurrently once both are set up.
+//! A webcam's camera and microphone are interfaces of one USB device. Some
+//! firmware (Logitech BRIO, 046d:085e) drops off the bus when a V4L2
+//! STREAMON and a USB audio start reach it together, so setups on one
+//! device are serialized; streaming stays concurrent.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Condvar, Mutex, PoisonError};
+use std::time::Duration;
 
-/// A stuck setup on the device (a hung driver request) must not stall the
-/// other source's startup past its own deadline; after this, go ahead.
+/// Longest wait for another setup on the device, so a hung one can't push
+/// this source past its open deadline.
 const WAIT: Duration = Duration::from_secs(2);
 
-static BUSY: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+static BUSY: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
 static FREED: Condvar = Condvar::new();
 
 /// The USB device (its sysfs directory) behind a class device's `device`
-/// link, such as `/sys/class/video4linux/video2/device` or
-/// `/sys/class/sound/card4/device`. `None` for non-USB devices.
-pub(crate) fn usb_device(device_link: &Path) -> Option<PathBuf> {
-    // The link names the USB interface (`1-1:1.0`); its parent directory is
-    // the device (`1-1`), the one that has a bus and device number.
+/// link, such as `/sys/class/video4linux/video2/device`. `None` for non-USB
+/// devices.
+fn usb_device(device_link: &Path) -> Option<PathBuf> {
+    // The link names the USB interface (`1-1:1.0`); its parent is the device.
     let interface = std::fs::canonicalize(device_link).ok()?;
     let device = interface.parent()?;
     device
@@ -37,8 +32,7 @@ pub(crate) fn usb_device(device_link: &Path) -> Option<PathBuf> {
 
 /// The USB device of a V4L2 node such as `/dev/video2`.
 pub(crate) fn video_node_device(node: &Path) -> Option<PathBuf> {
-    let name = std::fs::canonicalize(node).ok()?;
-    let name = name.file_name()?.to_str()?;
+    let name = node.file_name()?.to_str()?;
     usb_device(
         &Path::new("/sys/class/video4linux")
             .join(name)
@@ -68,44 +62,36 @@ fn begin_within(device: Option<PathBuf>, wait: Duration) -> Setup {
     let Some(device) = device else {
         return Setup { device: None };
     };
-    let deadline = Instant::now() + wait;
-    let mut busy = BUSY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    loop {
-        let set = busy.get_or_insert_with(HashSet::new);
-        if !set.contains(&device) {
-            set.insert(device.clone());
-            return Setup {
-                device: Some(device),
-            };
-        }
-        let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            isocast_diagnostics::output::deferred(
-                "warn",
-                module_path!(),
-                format!(
-                    "USB device {} still setting up another stream after {} ms; starting this one anyway",
-                    device.display(),
-                    wait.as_millis()
-                ),
-            );
-            // Not claimed: the holder's drop must not be undone by ours.
-            return Setup { device: None };
-        }
-        busy = FREED
-            .wait_timeout(busy, left)
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .0;
+    let busy = BUSY.lock().unwrap_or_else(PoisonError::into_inner);
+    let (mut busy, waited) = FREED
+        .wait_timeout_while(busy, wait, |busy| busy.contains(&device))
+        .unwrap_or_else(PoisonError::into_inner);
+    if waited.timed_out() {
+        drop(busy);
+        isocast_diagnostics::output::deferred(
+            "warn",
+            module_path!(),
+            format!(
+                "USB device {} still setting up another stream after {} ms; starting this one anyway",
+                device.display(),
+                wait.as_millis()
+            ),
+        );
+        // Not claimed: the holder's drop must not be undone by ours.
+        return Setup { device: None };
+    }
+    busy.insert(device.clone());
+    Setup {
+        device: Some(device),
     }
 }
 
 impl Drop for Setup {
     fn drop(&mut self) {
         if let Some(device) = self.device.take() {
-            let mut busy = BUSY.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if let Some(set) = busy.as_mut() {
-                set.remove(&device);
-            }
+            BUSY.lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&device);
             FREED.notify_all();
         }
     }
@@ -116,6 +102,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::Instant;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("isocast-usb-{name}-{}", std::process::id()));
@@ -183,7 +170,6 @@ mod tests {
             Duration::from_secs(5),
         );
         let _c = begin_within(None, Duration::from_secs(5));
-        let _d = begin_within(None, Duration::from_secs(5));
         assert!(started.elapsed() < Duration::from_secs(1));
     }
 
@@ -192,13 +178,21 @@ mod tests {
         let device = PathBuf::from("/test/usb3/3-1");
         let held = begin_within(Some(device.clone()), Duration::ZERO);
         let started = Instant::now();
-        let late = begin_within(Some(device.clone()), Duration::from_millis(50));
+        drop(begin_within(
+            Some(device.clone()),
+            Duration::from_millis(50),
+        ));
         assert!(started.elapsed() >= Duration::from_millis(50));
-        // The late one didn't claim the device, so releasing it can't free
-        // the device while the first still holds it.
-        drop(late);
-        assert!(BUSY.lock().unwrap().as_ref().unwrap().contains(&device));
+        // The late one didn't claim the device, so dropping it left it held.
+        let started = Instant::now();
+        drop(begin_within(
+            Some(device.clone()),
+            Duration::from_millis(50),
+        ));
+        assert!(started.elapsed() >= Duration::from_millis(50));
         drop(held);
-        assert!(!BUSY.lock().unwrap().as_ref().unwrap().contains(&device));
+        let started = Instant::now();
+        let _next = begin_within(Some(device), Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

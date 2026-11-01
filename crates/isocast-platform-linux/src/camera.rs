@@ -1889,8 +1889,7 @@ pub fn capture(
     let sizes = sizes(fd)?;
     let mode = select(&modes(&sizes), request, canvas)
         .with_context(|| format!("camera {:?} ({})", identity.camera.name, identity.camera.id))?;
-    // From format negotiation through STREAMON, nothing else may set up on
-    // this USB device (a webcam's own microphone): see usb_setup.
+    // Not while the webcam's own microphone sets up (usb_setup).
     let setup = usb_setup::begin(usb_setup::video_node_device(&identity.node));
     let layout = set_format(fd, &mode)?;
     let fps = set_rate(fd, &mode, request, canvas)?;
