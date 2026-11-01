@@ -253,7 +253,9 @@ fn main() -> ExitCode {
             let on_quit = daemon.clone();
             thread::spawn(move || {
                 // The first client's focused edge must not race initial native
-                // registration. Main continues pumping while this waits.
+                // registration. Main continues pumping while this waits. (Linux
+                // binds through the portal in the background: its bindings are
+                // focused input until the portal answers.)
                 daemon.refresh_hotkeys();
                 serve(listener, daemon)
             });

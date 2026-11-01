@@ -4,15 +4,20 @@
 //! config: `bind = MODS, KEY, global, dev.isocast.Isocast:<binding>`) and
 //! reports presses and releases. A missing or silent portal leaves every
 //! binding to focused input.
+//!
+//! Binding can wait on a desktop dialog, so it runs in the background:
+//! [`LinuxHotkeys::replace`] returns at once and hands the result to its
+//! callback when the portal answers. Until then every binding is focused
+//! input ([`waiting`]).
 
-use std::sync::{Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ashpd::desktop::Session;
 use ashpd::desktop::global_shortcuts::{GlobalShortcuts, NewShortcut};
 use futures_util::StreamExt;
-use isocast_engine::hotkeys::{Edge, GlobalHotkeys, Key, OnKey};
+use isocast_engine::hotkeys::{Edge, Key, OnKey};
 use isocast_protocol::hotkeys::{Chord, Phase, Registration};
 
 /// The app id of packaging/linux/dev.isocast.Isocast.desktop. Host apps
@@ -25,15 +30,35 @@ const ANSWER: Duration = Duration::from_secs(5);
 const ASSIGN: Duration = Duration::from_secs(30);
 const CLOSE: Duration = Duration::from_secs(2);
 
+/// What each binding reports while the portal has not answered yet.
+pub const WAITING: &str =
+    "waiting for the desktop's GlobalShortcuts portal; focused input works meanwhile";
+
+/// Receives the registrations once the portal answers (or fails). Called on
+/// the hotkey runtime's thread, never by a replaced request.
+pub type OnRegistered = Box<dyn FnOnce(Vec<Registration>) + Send>;
+
 /// The portal session of the current registrations; replaced as a whole.
+/// Dropping it stops its listener, which drops the session's connection, so
+/// the portal ends the session even if it was never closed.
 struct Running {
     session: Session<GlobalShortcuts>,
     listener: tokio::task::JoinHandle<()>,
 }
 
 #[derive(Default)]
+struct State {
+    /// Counts `replace` calls; a registration stores its session only if no
+    /// later call came first.
+    turn: u64,
+    running: Option<Running>,
+    /// The registration in flight, aborted by the next `replace`.
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+#[derive(Default)]
 pub struct LinuxHotkeys {
-    running: Mutex<Option<Running>>,
+    state: Arc<Mutex<State>>,
 }
 
 impl LinuxHotkeys {
@@ -42,6 +67,10 @@ impl LinuxHotkeys {
         static SHARED: OnceLock<LinuxHotkeys> = OnceLock::new();
         SHARED.get_or_init(LinuxHotkeys::default)
     }
+}
+
+fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
+    state.lock().unwrap_or_else(|error| error.into_inner())
 }
 
 /// One runtime for every session: its listener runs between calls. Each
@@ -61,19 +90,57 @@ fn runtime() -> Result<&'static tokio::runtime::Runtime> {
         .map_err(|error| anyhow::anyhow!("hotkey runtime: {error}"))
 }
 
-/// Run `task` on the hotkey runtime and wait at most `limit` for it. The
-/// caller is never a runtime thread, and never waits on a wedged one.
-fn run<T: Send + 'static>(
-    limit: Duration,
-    task: impl Future<Output = Result<T>> + Send + 'static,
-) -> Result<T> {
-    let (send, receive) = mpsc::sync_channel(1);
-    runtime()?.spawn(async move {
-        let _ = send.send(task.await);
-    });
-    receive
-        .recv_timeout(limit + Duration::from_secs(1))
-        .context("the hotkey runtime did not answer")?
+/// Every binding focused-only, with the same warning.
+fn focused(keys: &[Key], warning: &str) -> Vec<Registration> {
+    keys.iter()
+        .map(|key| Registration {
+            binding: key.binding.clone(),
+            global: false,
+            warning: Some(warning.to_string()),
+        })
+        .collect()
+}
+
+/// What each binding reports until the portal answers.
+pub fn waiting(keys: &[Key]) -> Vec<Registration> {
+    focused(keys, WAITING)
+}
+
+fn unavailable(keys: &[Key], error: &anyhow::Error) -> Vec<Registration> {
+    focused(
+        keys,
+        &format!(
+            "the desktop's GlobalShortcuts portal is unavailable ({error:#}); use focused input"
+        ),
+    )
+}
+
+/// The registrations for `keys` once the desktop bound `assigned`: each
+/// shortcut id with the trigger the desktop describes for it.
+fn registrations(keys: Vec<Key>, assigned: &[(String, String)]) -> Vec<Registration> {
+    keys.into_iter()
+        .map(|key| {
+            let trigger = assigned.iter().find(|(id, _)| *id == key.binding);
+            let warning = match trigger {
+                None => Some(
+                    "the desktop's GlobalShortcuts portal did not bind it; use focused input"
+                        .to_string(),
+                ),
+                Some((_, trigger)) if trigger.is_empty() => Some(format!(
+                    "registered with the desktop, which has no keys for it yet; assign them \
+                     in its shortcut settings (Hyprland: bind = MODS, KEY, global, \
+                     {APP_ID}:{})",
+                    key.binding
+                )),
+                Some(_) => None,
+            };
+            Registration {
+                global: trigger.is_some(),
+                binding: key.binding,
+                warning,
+            }
+        })
+        .collect()
 }
 
 /// A chord as the shortcuts specification writes it: `CTRL+SHIFT+F13`.
@@ -144,77 +211,73 @@ fn keysym(key: &str) -> String {
 }
 
 impl Running {
-    fn close(self) {
+    async fn close(self) {
         self.listener.abort();
-        let session = self.session;
-        let _ = run(CLOSE, async move {
-            let _ = tokio::time::timeout(CLOSE, session.close()).await;
-            Ok(())
-        });
+        let _ = tokio::time::timeout(CLOSE, self.session.close()).await;
     }
 }
 
-impl GlobalHotkeys for LinuxHotkeys {
-    fn replace(&self, keys: Vec<Key>, generation: u64, on_key: OnKey) -> Vec<Registration> {
-        let mut running = self
-            .running
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if let Some(previous) = running.take() {
-            previous.close();
-        }
-        if keys.is_empty() {
-            return Vec::new();
-        }
-        let shortcuts: Vec<NewShortcut> = keys
-            .iter()
-            .map(|key| {
-                NewShortcut::new(key.binding.clone(), format!("Isocast: {}", key.binding))
-                    .preferred_trigger(trigger(&key.chord).as_str())
-            })
-            .collect();
-        let bound = run(ANSWER + ASSIGN, register(shortcuts, generation, on_key));
-        let (started, assigned) = match bound {
-            Ok(bound) => bound,
-            Err(error) => {
-                let warning = format!(
-                    "the desktop's GlobalShortcuts portal is unavailable ({error:#}); use focused \
-                     input"
-                );
-                return keys
-                    .into_iter()
-                    .map(|key| Registration {
-                        binding: key.binding,
-                        global: false,
-                        warning: Some(warning.clone()),
-                    })
-                    .collect();
-            }
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.listener.abort();
+    }
+}
+
+impl LinuxHotkeys {
+    /// Replace the registrations. Returns at once: the old session closes
+    /// and the new one binds on the hotkey runtime, then `done` gets the
+    /// registrations. A later call cancels this one, whose `done` is then
+    /// never called. Until `done`, every binding is focused input
+    /// ([`waiting`]); `generation` rejects edges of an old profile.
+    pub fn replace(&self, keys: Vec<Key>, generation: u64, on_key: OnKey, done: OnRegistered) {
+        let runtime = match runtime() {
+            Ok(runtime) => runtime,
+            Err(error) => return done(unavailable(&keys, &error)),
         };
-        *running = Some(started);
-        keys.into_iter()
-            .map(|key| {
-                let trigger = assigned.iter().find(|(id, _)| *id == key.binding);
-                let warning = match trigger {
-                    None => Some(
-                        "the desktop's GlobalShortcuts portal did not bind it; use focused input"
-                            .to_string(),
-                    ),
-                    Some((_, trigger)) if trigger.is_empty() => Some(format!(
-                        "registered with the desktop, which has no keys for it yet; assign them \
-                         in its shortcut settings (Hyprland: bind = MODS, KEY, global, \
-                         {APP_ID}:{})",
-                        key.binding
-                    )),
-                    Some(_) => None,
-                };
-                Registration {
-                    global: trigger.is_some(),
-                    binding: key.binding,
-                    warning,
+        let mut state = lock(&self.state);
+        state.turn += 1;
+        let turn = state.turn;
+        if let Some(task) = state.task.take() {
+            task.abort();
+        }
+        let previous = state.running.take();
+        let shared = self.state.clone();
+        state.task = Some(runtime.spawn(async move {
+            if let Some(previous) = previous {
+                previous.close().await;
+            }
+            if keys.is_empty() {
+                return done(Vec::new());
+            }
+            let shortcuts: Vec<NewShortcut> = keys
+                .iter()
+                .map(|key| {
+                    NewShortcut::new(key.binding.clone(), format!("Isocast: {}", key.binding))
+                        .preferred_trigger(trigger(&key.chord).as_str())
+                })
+                .collect();
+            let result = match register(shortcuts, generation, on_key).await {
+                Ok((running, assigned)) => {
+                    let replaced = {
+                        let mut state = lock(&shared);
+                        if state.turn == turn {
+                            state.running = Some(running);
+                            None
+                        } else {
+                            Some(running)
+                        }
+                    };
+                    if let Some(running) = replaced {
+                        // A later call replaced this one while it bound.
+                        running.close().await;
+                        return;
+                    }
+                    registrations(keys, &assigned)
                 }
-            })
-            .collect()
+                Err(error) => unavailable(&keys, &error),
+            };
+            done(result);
+        }));
     }
 }
 
@@ -321,5 +384,70 @@ mod tests {
         assert_eq!(trigger(&chord("numpad_7", 0)), "KP_7");
         assert_eq!(trigger(&chord("pagedown", 1)), "CTRL+Next");
         assert_eq!(trigger(&chord("media_play_pause", 0)), "XF86AudioPlay");
+    }
+
+    fn key(binding: &str) -> Key {
+        Key {
+            binding: binding.into(),
+            chord: Chord {
+                key: "f13".into(),
+                modifiers: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn bound_shortcuts_are_global_and_the_rest_say_why_not() {
+        let keys = vec![key("bound"), key("no_keys"), key("refused")];
+        let assigned = vec![
+            ("bound".to_string(), "Ctrl+F13".to_string()),
+            ("no_keys".to_string(), String::new()),
+        ];
+        let got = registrations(keys, &assigned);
+        assert_eq!(
+            got[0],
+            Registration {
+                binding: "bound".into(),
+                global: true,
+                warning: None,
+            }
+        );
+        assert!(got[1].global);
+        assert_eq!(
+            got[1].warning.as_deref(),
+            Some(
+                "registered with the desktop, which has no keys for it yet; assign them in its \
+                 shortcut settings (Hyprland: bind = MODS, KEY, global, \
+                 dev.isocast.Isocast:no_keys)"
+            )
+        );
+        assert!(!got[2].global);
+        assert_eq!(
+            got[2].warning.as_deref(),
+            Some("the desktop's GlobalShortcuts portal did not bind it; use focused input")
+        );
+    }
+
+    #[test]
+    fn a_failed_portal_leaves_every_binding_focused() {
+        let keys = vec![key("a"), key("b")];
+        let error = anyhow::anyhow!("it did not answer within 5 s");
+        let got = unavailable(&keys, &error);
+        assert_eq!(got.len(), 2);
+        for registration in &got {
+            assert!(!registration.global);
+            assert_eq!(
+                registration.warning.as_deref(),
+                Some(
+                    "the desktop's GlobalShortcuts portal is unavailable (it did not answer \
+                     within 5 s); use focused input"
+                )
+            );
+        }
+        assert!(
+            waiting(&keys)
+                .iter()
+                .all(|r| !r.global && r.warning.as_deref() == Some(WAITING))
+        );
     }
 }
