@@ -2151,7 +2151,13 @@ fn peer_pid(stream: &UnixStream) -> Option<u32> {
     isocast_ipc::peer_pid(stream).ok()
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    isocast_platform_linux::plugin::peer_pid(stream.local()?.as_raw_fd())
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "linux"))))]
 fn peer_pid(_stream: &UnixStream) -> Option<u32> {
     None
 }
@@ -2165,7 +2171,12 @@ fn process_info(pid: u32) -> Option<(u32, (u64, u64))> {
     isocast_platform_macos::plugin::process_info(pid)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn process_info(pid: u32) -> Option<(u32, (u64, u64))> {
+    isocast_platform_linux::plugin::process_info(pid)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn process_info(_pid: u32) -> Option<(u32, (u64, u64))> {
     None
 }
