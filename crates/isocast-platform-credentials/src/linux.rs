@@ -389,6 +389,19 @@ const PROMPT: &str = "org.freedesktop.Secret.Prompt";
 const KEYRING_CALL: Duration = Duration::from_secs(5);
 /// How long an unlock prompt on the desktop waits for the person.
 const KEYRING_PROMPT: Duration = Duration::from_secs(120);
+/// After a time-out, calls fail at once for this long, so stream status,
+/// which checks every destination's key, doesn't wait on each.
+const KEYRING_BACKOFF: Duration = Duration::from_secs(60);
+static TIMED_OUT_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+const TIMED_OUT: &str = "keyring: the Secret Service (org.freedesktop.secrets) did not answer \
+                         within 5 seconds; restart the desktop keyring, or log out and in, and \
+                         retry (Isocast asks it again 60 s after a time-out)";
+
+fn timed_out_at() -> std::sync::MutexGuard<'static, Option<Instant>> {
+    TIMED_OUT_AT
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
 
 /// zbus reports a call past [`KEYRING_CALL`] as a `TimedOut` I/O error.
 fn timed_out(error: &anyhow::Error) -> bool {
@@ -610,7 +623,10 @@ fn attributes<'a>(service: &'a str, account: &'a str) -> HashMap<&'a str, &'a st
 /// callers may already be on one. None when no Secret Service is on the
 /// session bus; callers then use the files.
 fn with_keyring<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> Result<Option<T>> {
-    std::thread::scope(|scope| {
+    if timed_out_at().is_some_and(|at| at.elapsed() < KEYRING_BACKOFF) {
+        bail!(TIMED_OUT);
+    }
+    let result = std::thread::scope(|scope| {
         scope
             .spawn(|| {
                 let runtime = tokio::runtime::Builder::new_current_thread()
@@ -630,17 +646,14 @@ fn with_keyring<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> R
             })
             .join()
             .map_err(|_| anyhow::anyhow!("keyring: the D-Bus thread panicked"))?
-    })
-    .map_err(|error| {
-        if timed_out(&error) {
-            error.context(
-                "keyring: the Secret Service (org.freedesktop.secrets) did not answer within 5 \
-                 seconds; restart the desktop keyring, or log out and in, and retry",
-            )
-        } else {
-            error
+    });
+    match result {
+        Err(error) if timed_out(&error) => {
+            *timed_out_at() = Some(Instant::now());
+            bail!(TIMED_OUT)
         }
-    })
+        other => other,
+    }
 }
 
 pub fn secret(service: &str, account: &str) -> Result<Option<String>> {

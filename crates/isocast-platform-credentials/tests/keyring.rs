@@ -107,11 +107,18 @@ fn child_entry() {
             assert!(error.contains("did not answer within 5 seconds"), "{error}");
             assert!(
                 waited >= Duration::from_secs(4) && waited < Duration::from_secs(12),
-                "a call waits for the time limit: {waited:?}"
+                "the first call waits for the time limit: {waited:?}"
             );
+            let started = Instant::now();
             assert!(set_secret(&service, ACCOUNT, VALUE).is_err());
+            assert!(delete_secret(&service, ACCOUNT).is_err());
+            let later = started.elapsed();
+            assert!(
+                later < Duration::from_secs(1),
+                "later calls fail at once: {later:?}"
+            );
             assert!(files(&config()).is_empty(), "never a file instead");
-            println!("hung keyring: {waited:?}: {error}");
+            println!("hung keyring: first call {waited:?}, next two {later:?}: {error}");
         }
         other => panic!("unknown role {other}"),
     }
@@ -211,7 +218,7 @@ fn a_file_written_without_the_keyring_wins_over_its_older_item() {
 }
 
 #[test]
-#[ignore = "starts dbus-run-session and dbus-test-tool; takes about 10 s"]
+#[ignore = "starts dbus-run-session and dbus-test-tool; takes about 5 s"]
 fn a_hung_keyring_is_an_error_after_its_time_limit() {
     let scratch = Scratch::new("hung");
     run(scratch.child("hung", Some(WITH_HUNG_KEYRING), None));
