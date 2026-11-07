@@ -397,23 +397,12 @@ const KEYRING_BACKOFF: Duration = Duration::from_secs(60);
 /// When the keyring last failed to answer.
 static KEYRING_DOWN: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
-/// A Secret Service call that ran out of time.
-#[derive(Debug)]
-struct KeyringTimeout;
-
-impl std::fmt::Display for KeyringTimeout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("keyring: the Secret Service did not answer within 5 seconds")
-    }
-}
-
-impl std::error::Error for KeyringTimeout {}
-
-async fn timed<T>(future: impl Future<Output = zbus::Result<T>>) -> Result<T> {
-    tokio::time::timeout(KEYRING_CALL, future)
-        .await
-        .map_err(|_| anyhow::Error::new(KeyringTimeout))?
-        .map_err(Into::into)
+/// zbus reports a call past [`KEYRING_CALL`] as a `TimedOut` I/O error.
+fn timed_out(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(cause.downcast_ref::<zbus::Error>(),
+            Some(zbus::Error::InputOutput(io)) if io.kind() == std::io::ErrorKind::TimedOut)
+    })
 }
 
 fn keyring_backing_off() -> bool {
@@ -433,13 +422,11 @@ fn set_keyring_down(down: bool) {
 // Avahi client in isocast-discovery does.
 macro_rules! call {
     ($keyring:expr, $path:expr, $interface:expr, $method:expr, $body:expr) => {
-        timed(
-            $keyring
-                .conn
-                .call_method(Some(SECRETS), $path, Some($interface), $method, $body),
-        )
-        .await
-        .with_context(|| format!("keyring: {}.{} failed", $interface, $method))
+        $keyring
+            .conn
+            .call_method(Some(SECRETS), $path, Some($interface), $method, $body)
+            .await
+            .with_context(|| format!("keyring: {}.{} failed", $interface, $method))
     };
 }
 
@@ -457,17 +444,21 @@ struct Keyring {
 
 impl Keyring {
     async fn open() -> Result<Self> {
-        let conn = timed(Connection::session()).await?;
-        let (_, session): (OwnedValue, OwnedObjectPath) = timed(conn.call_method(
-            Some(SECRETS),
-            "/org/freedesktop/secrets",
-            Some(SERVICE),
-            "OpenSession",
-            &("plain", Value::from("")),
-        ))
-        .await?
-        .body()
-        .deserialize()?;
+        let conn = zbus::connection::Builder::session()?
+            .method_timeout(KEYRING_CALL)
+            .build()
+            .await?;
+        let (_, session): (OwnedValue, OwnedObjectPath) = conn
+            .call_method(
+                Some(SECRETS),
+                "/org/freedesktop/secrets",
+                Some(SERVICE),
+                "OpenSession",
+                &("plain", Value::from("")),
+            )
+            .await?
+            .body()
+            .deserialize()?;
         Ok(Self { conn, session })
     }
 
@@ -496,7 +487,7 @@ impl Keyring {
             .member("Completed")?
             .path(prompt.as_str())?
             .build();
-        let mut completed = timed(MessageStream::for_match_rule(rule, &self.conn, Some(4))).await?;
+        let mut completed = MessageStream::for_match_rule(rule, &self.conn, Some(4)).await?;
         call!(self, prompt.as_str(), PROMPT, "Prompt", &"")?;
         let Ok(signal) = tokio::time::timeout(KEYRING_PROMPT, completed.next()).await else {
             let _ = call!(self, prompt.as_str(), PROMPT, "Dismiss", &());
@@ -516,6 +507,7 @@ impl Keyring {
         Ok(())
     }
 
+    /// An object that is already unlocked comes back with no prompt.
     async fn unlock(&self, path: &ObjectPath<'_>) -> Result<()> {
         let (_, prompt): (Vec<OwnedObjectPath>, OwnedObjectPath) = call!(
             self,
@@ -532,19 +524,12 @@ impl Keyring {
         Ok(())
     }
 
-    async fn unlock_item(&self, item: &ObjectPath<'_>) -> Result<()> {
-        if self.property::<bool>(item, ITEM, "Locked").await? {
-            self.unlock(item).await?;
-        }
-        Ok(())
-    }
-
     /// The kept secret, unlocking its collection (a prompt) if it's locked.
     async fn read(&self, service: &str, account: &str) -> Result<Option<String>> {
         let Some(item) = self.search(service, account).await?.into_iter().next() else {
             return Ok(None);
         };
-        self.unlock_item(&item).await?;
+        self.unlock(&item).await?;
         let (_, _, value, _): (OwnedObjectPath, Vec<u8>, Vec<u8>, String) =
             call!(self, item.as_str(), ITEM, "GetSecret", &(&self.session,))?
                 .body()
@@ -556,23 +541,6 @@ impl Keyring {
                  and store the secret again"
             )
         })
-    }
-
-    async fn property<T>(&self, path: &ObjectPath<'_>, interface: &str, name: &str) -> Result<T>
-    where
-        T: TryFrom<OwnedValue>,
-        T::Error: Into<zbus::zvariant::Error>,
-    {
-        let value: OwnedValue = call!(
-            self,
-            path.as_str(),
-            "org.freedesktop.DBus.Properties",
-            "Get",
-            &(interface, name)
-        )?
-        .body()
-        .deserialize()?;
-        T::try_from(value).map_err(|error| anyhow::Error::from(error.into()))
     }
 
     /// The default collection, or None when the keyring has none.
@@ -644,7 +612,7 @@ impl Keyring {
     async fn delete(&self, service: &str, account: &str) -> Result<bool> {
         let items = self.search(service, account).await?;
         for item in &items {
-            self.unlock_item(item).await?;
+            self.unlock(item).await?;
             let prompt: OwnedObjectPath = call!(self, item.as_str(), ITEM, "Delete", &())?
                 .body()
                 .deserialize()?;
@@ -676,7 +644,7 @@ fn with_keyring<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> R
     match &result {
         Ok(None) => set_keyring_down(true),
         Ok(Some(_)) => set_keyring_down(false),
-        Err(error) if error.chain().any(|cause| cause.is::<KeyringTimeout>()) => {
+        Err(error) if timed_out(error) => {
             set_keyring_down(true);
             return Ok(None);
         }

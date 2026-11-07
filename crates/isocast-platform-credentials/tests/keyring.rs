@@ -102,7 +102,10 @@ fn child_entry() {
             assert_eq!(lookup(&service), OLD, "the keyring keeps its older item");
             assert_eq!(secret(&service, ACCOUNT).unwrap().as_deref(), Some(VALUE));
             set_secret(&service, ACCOUNT, NEWER).unwrap();
-            assert!(files(&config()).is_empty(), "a keyring write removes the file");
+            assert!(
+                files(&config()).is_empty(),
+                "a keyring write removes the file"
+            );
             assert_eq!(lookup(&service), NEWER);
             assert_eq!(secret(&service, ACCOUNT).unwrap().as_deref(), Some(NEWER));
             assert!(delete_secret(&service, ACCOUNT).unwrap());
