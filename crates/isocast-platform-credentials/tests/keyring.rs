@@ -24,6 +24,8 @@ use isocast_platform_credentials::{delete_secret, has_secret, secret, set_secret
 const ROLE: &str = "ISOCAST_KEYRING_TEST_ROLE";
 const ACCOUNT: &str = "test-account";
 const VALUE: &str = "live_0123456789abcdef";
+const OLD: &str = "live_old";
+const NEWER: &str = "live_newer";
 
 /// The service name every case uses: unique to this run, so a leftover
 /// item can never be mistaken for a real one.
@@ -92,15 +94,17 @@ fn child_entry() {
             set_secret(&service, ACCOUNT, VALUE).unwrap();
             assert_eq!(files(&config()).len(), 1);
         }
-        "adopt" => {
-            assert_eq!(
-                files(&config()).len(),
-                1,
-                "the file from before the keyring"
-            );
+        "keyring-old" => {
+            set_secret(&service, ACCOUNT, OLD).unwrap();
+            assert_eq!(lookup(&service), OLD);
+        }
+        "file-wins" => {
+            assert_eq!(lookup(&service), OLD, "the keyring keeps its older item");
             assert_eq!(secret(&service, ACCOUNT).unwrap().as_deref(), Some(VALUE));
-            assert!(files(&config()).is_empty(), "the file is gone once adopted");
-            assert_eq!(lookup(&service), VALUE);
+            set_secret(&service, ACCOUNT, NEWER).unwrap();
+            assert!(files(&config()).is_empty(), "a keyring write removes the file");
+            assert_eq!(lookup(&service), NEWER);
+            assert_eq!(secret(&service, ACCOUNT).unwrap().as_deref(), Some(NEWER));
             assert!(delete_secret(&service, ACCOUNT).unwrap());
         }
         "hung" => {
@@ -212,10 +216,11 @@ fn with_a_keyring_secrets_never_reach_a_file() {
 
 #[test]
 #[ignore = "starts dbus-run-session and gnome-keyring-daemon"]
-fn a_secret_kept_in_a_file_moves_into_the_keyring() {
-    let scratch = Scratch::new("adopt");
+fn a_file_written_without_the_keyring_wins_over_its_older_item() {
+    let scratch = Scratch::new("file-wins");
+    run(scratch.child("keyring-old", Some(WITH_KEYRING), None));
     run(scratch.child("write-file", None, Some("unix:path=/nonexistent")));
-    run(scratch.child("adopt", Some(WITH_KEYRING), None));
+    run(scratch.child("file-wins", Some(WITH_KEYRING), None));
 }
 
 #[test]

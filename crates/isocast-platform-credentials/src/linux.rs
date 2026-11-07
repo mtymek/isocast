@@ -3,7 +3,8 @@
 //! with the attributes `application`, `service` and `account`. Without one
 //! (headless machines, CI, VMs) they are plaintext 0600 files in an
 //! owner-only XDG directory, which processes running as this user can read.
-//! A secret found only in a file moves into an unlocked keyring when read.
+//! A file is always newer than the keyring's item: a keyring write deletes
+//! it, so reads take the file first.
 
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -640,26 +641,6 @@ impl Keyring {
         Ok(true)
     }
 
-    /// Moves a secret found only in a file into the keyring if that needs no
-    /// prompt, deleting the file only once the keyring holds it. Best effort.
-    async fn adopt(&self, service: &str, account: &str, value: &str) -> Result<()> {
-        let Some(collection) = self.collection().await? else {
-            return Ok(());
-        };
-        if self
-            .property::<bool>(&collection, COLLECTION, "Locked")
-            .await?
-        {
-            return Ok(());
-        }
-        self.create(&collection, service, account, value).await?;
-        // A writer without a keyring may have replaced the file meanwhile.
-        if file_secret(service, account)?.as_deref() == Some(value) {
-            file_delete(service, account)?;
-        }
-        Ok(())
-    }
-
     async fn delete(&self, service: &str, account: &str) -> Result<bool> {
         let items = self.search(service, account).await?;
         for item in &items {
@@ -728,27 +709,20 @@ fn keyring_call<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> R
 }
 
 pub fn secret(service: &str, account: &str) -> Result<Option<String>> {
-    let kept = with_keyring(async |keyring| {
-        if let Some(value) = keyring.read(service, account).await? {
-            return Ok(Some(value));
-        }
-        let Some(value) = file_secret(service, account)? else {
-            return Ok(None);
-        };
-        let _ = keyring.adopt(service, account, &value).await;
-        Ok(Some(value))
-    })?;
-    match kept {
-        Some(value) => Ok(value),
-        None => file_secret(service, account),
+    if let Some(value) = file_secret(service, account)? {
+        return Ok(Some(value));
     }
+    Ok(with_keyring(async |keyring| keyring.read(service, account).await)?.flatten())
 }
 
 /// Never prompts, even for a locked keyring.
 pub fn has_secret(service: &str, account: &str) -> Result<bool> {
+    if file_secret(service, account)?.is_some() {
+        return Ok(true);
+    }
     let kept =
         with_keyring(async |keyring| Ok(!keyring.search(service, account).await?.is_empty()))?;
-    Ok(kept == Some(true) || file_secret(service, account)?.is_some())
+    Ok(kept == Some(true))
 }
 
 pub fn set_secret(service: &str, account: &str, value: &str) -> Result<()> {
@@ -757,8 +731,8 @@ pub fn set_secret(service: &str, account: &str, value: &str) -> Result<()> {
         "secret store: value for {service} ({account}) exceeds 64 KiB; store a smaller secret"
     );
     if with_keyring(async |keyring| keyring.store(service, account, value).await)? == Some(true) {
-        // A file from before the keyring would only be stale now.
-        let _ = file_delete(service, account);
+        // Reads take a file first, so an older one must go.
+        file_delete(service, account)?;
         return Ok(());
     }
     file_set(service, account, value)
