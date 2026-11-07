@@ -385,17 +385,11 @@ const SERVICE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION: &str = "org.freedesktop.Secret.Collection";
 const ITEM: &str = "org.freedesktop.Secret.Item";
 const PROMPT: &str = "org.freedesktop.Secret.Prompt";
-/// Bounds every Secret Service call, so a missing or hung keyring falls back
-/// to the files (or fails) instead of hanging.
+/// Bounds every Secret Service call, so a hung keyring fails instead of
+/// hanging.
 const KEYRING_CALL: Duration = Duration::from_secs(5);
 /// How long an unlock prompt on the desktop waits for the person.
 const KEYRING_PROMPT: Duration = Duration::from_secs(120);
-
-/// After the keyring fails to answer, it is skipped for this long, so
-/// callers that run often (stream status) don't wait on it each time.
-const KEYRING_BACKOFF: Duration = Duration::from_secs(60);
-/// When the keyring last failed to answer.
-static KEYRING_DOWN: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
 
 /// zbus reports a call past [`KEYRING_CALL`] as a `TimedOut` I/O error.
 fn timed_out(error: &anyhow::Error) -> bool {
@@ -403,19 +397,6 @@ fn timed_out(error: &anyhow::Error) -> bool {
         matches!(cause.downcast_ref::<zbus::Error>(),
             Some(zbus::Error::InputOutput(io)) if io.kind() == std::io::ErrorKind::TimedOut)
     })
-}
-
-fn keyring_backing_off() -> bool {
-    let down = KEYRING_DOWN
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    down.is_some_and(|at| at.elapsed() < KEYRING_BACKOFF)
-}
-
-fn set_keyring_down(down: bool) {
-    *KEYRING_DOWN
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner()) = down.then(Instant::now);
 }
 
 // Keep the wire types visible at each call, without serde bounds, as the
@@ -632,28 +613,10 @@ fn attributes<'a>(service: &'a str, account: &'a str) -> HashMap<&'a str, &'a st
     ])
 }
 
-/// Runs `f` against the desktop keyring on a thread and runtime of its own
-/// (callers may already be on a runtime). None when no Secret Service answers
-/// on the session bus, when a call to it times out, and for
-/// [`KEYRING_BACKOFF`] after either; callers then use the files.
+/// Runs `f` against the desktop keyring, on its own thread and runtime since
+/// callers may already be on one. None when no Secret Service is on the
+/// session bus; callers then use the files.
 fn with_keyring<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> Result<Option<T>> {
-    if keyring_backing_off() {
-        return Ok(None);
-    }
-    let result = keyring_call(f);
-    match &result {
-        Ok(None) => set_keyring_down(true),
-        Ok(Some(_)) => set_keyring_down(false),
-        Err(error) if timed_out(error) => {
-            set_keyring_down(true);
-            return Ok(None);
-        }
-        Err(_) => {}
-    }
-    result
-}
-
-fn keyring_call<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> Result<Option<T>> {
     std::thread::scope(|scope| {
         scope
             .spawn(|| {
@@ -664,6 +627,7 @@ fn keyring_call<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> R
                 let result = runtime.block_on(async {
                     match Keyring::open().await {
                         Ok(keyring) => f(&keyring).await.map(Some),
+                        Err(error) if timed_out(&error) => Err(error),
                         Err(_) => Ok(None),
                     }
                 });
@@ -673,6 +637,16 @@ fn keyring_call<T: Send>(f: impl AsyncFnOnce(&Keyring) -> Result<T> + Send) -> R
             })
             .join()
             .map_err(|_| anyhow::anyhow!("keyring: the D-Bus thread panicked"))?
+    })
+    .map_err(|error| {
+        if timed_out(&error) {
+            error.context(
+                "keyring: the Secret Service (org.freedesktop.secrets) did not answer within 5 \
+                 seconds; restart the desktop keyring, or log out and in, and retry",
+            )
+        } else {
+            error
+        }
     })
 }
 

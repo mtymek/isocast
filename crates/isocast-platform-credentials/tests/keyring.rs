@@ -111,23 +111,17 @@ fn child_entry() {
             assert!(delete_secret(&service, ACCOUNT).unwrap());
         }
         "hung" => {
-            let first = Instant::now();
-            assert!(!has_secret(&service, ACCOUNT).unwrap());
-            let first = first.elapsed();
+            let started = Instant::now();
+            let error = format!("{:#}", has_secret(&service, ACCOUNT).unwrap_err());
+            let waited = started.elapsed();
+            assert!(error.contains("did not answer within 5 seconds"), "{error}");
             assert!(
-                first >= Duration::from_secs(4) && first < Duration::from_secs(12),
-                "the first call waits for the time limit: {first:?}"
+                waited >= Duration::from_secs(4) && waited < Duration::from_secs(12),
+                "a call waits for the time limit: {waited:?}"
             );
-            let second = Instant::now();
-            set_secret(&service, ACCOUNT, VALUE).unwrap();
-            assert_eq!(secret(&service, ACCOUNT).unwrap().as_deref(), Some(VALUE));
-            let second = second.elapsed();
-            assert!(
-                second < Duration::from_secs(1),
-                "later calls skip the keyring: {second:?}"
-            );
-            assert_eq!(files(&config()).len(), 1, "kept in a file meanwhile");
-            println!("hung keyring: first call {first:?}, next two {second:?}");
+            assert!(set_secret(&service, ACCOUNT, VALUE).is_err());
+            assert!(files(&config()).is_empty(), "never a file instead");
+            println!("hung keyring: {waited:?}: {error}");
         }
         other => panic!("unknown role {other}"),
     }
@@ -227,8 +221,8 @@ fn a_file_written_without_the_keyring_wins_over_its_older_item() {
 }
 
 #[test]
-#[ignore = "starts dbus-run-session and dbus-test-tool; takes about 5 s"]
-fn a_hung_keyring_is_skipped_after_its_time_limit() {
+#[ignore = "starts dbus-run-session and dbus-test-tool; takes about 10 s"]
+fn a_hung_keyring_is_an_error_after_its_time_limit() {
     let scratch = Scratch::new("hung");
     run(scratch.child("hung", Some(WITH_HUNG_KEYRING), None));
 }
