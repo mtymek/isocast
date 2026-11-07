@@ -385,8 +385,7 @@ const SERVICE: &str = "org.freedesktop.Secret.Service";
 const COLLECTION: &str = "org.freedesktop.Secret.Collection";
 const ITEM: &str = "org.freedesktop.Secret.Item";
 const PROMPT: &str = "org.freedesktop.Secret.Prompt";
-/// Bounds every Secret Service call, so a hung keyring fails instead of
-/// hanging.
+/// Every Secret Service call fails after this long.
 const KEYRING_CALL: Duration = Duration::from_secs(5);
 /// How long an unlock prompt on the desktop waits for the person.
 const KEYRING_PROMPT: Duration = Duration::from_secs(120);
@@ -459,8 +458,6 @@ impl Keyring {
         Ok(unlocked)
     }
 
-    /// Shows the desktop's prompt (an unlock dialog, or a confirmation) and
-    /// waits for the person to answer it.
     async fn prompt(&self, prompt: &ObjectPath<'_>) -> Result<()> {
         let rule = MatchRule::builder()
             .msg_type(Type::Signal)
@@ -505,7 +502,6 @@ impl Keyring {
         Ok(())
     }
 
-    /// The kept secret, unlocking its collection (a prompt) if it's locked.
     async fn read(&self, service: &str, account: &str) -> Result<Option<String>> {
         let Some(item) = self.search(service, account).await?.into_iter().next() else {
             return Ok(None);
@@ -524,7 +520,6 @@ impl Keyring {
         })
     }
 
-    /// The default collection, or None when the keyring has none.
     async fn collection(&self) -> Result<Option<OwnedObjectPath>> {
         let path: OwnedObjectPath = call!(
             self,
@@ -538,8 +533,6 @@ impl Keyring {
         Ok((!no_path(&path)).then_some(path))
     }
 
-    /// Keeps `value` in `collection`, replacing an item with the same
-    /// attributes there.
     async fn create(
         &self,
         collection: &ObjectPath<'_>,
@@ -569,6 +562,7 @@ impl Keyring {
             collection.as_str(),
             COLLECTION,
             "CreateItem",
+            // true: replace an item with the same attributes.
             &(properties, secret, true)
         )?
         .body()
@@ -579,8 +573,7 @@ impl Keyring {
         Ok(())
     }
 
-    /// Keeps `value`, unlocking the default collection (a prompt) if it's
-    /// locked. False when the keyring has no default collection.
+    /// False when the keyring has no default collection.
     async fn store(&self, service: &str, account: &str, value: &str) -> Result<bool> {
         let Some(collection) = self.collection().await? else {
             return Ok(false);

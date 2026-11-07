@@ -1,17 +1,7 @@
-//! The Linux secret store: the desktop keyring through the Secret Service,
-//! and the plaintext files it falls back to.
-//!
-//! Each case runs this test binary again as a child with an environment of
-//! its own (a scratch `HOME` and `XDG_CONFIG_HOME`, and a private or missing
-//! session bus), since changing the environment of a threaded test process
-//! is unsafe. The child does the work in `child_entry` and panics on a
-//! failed check.
-//!
-//! The cases marked `#[ignore]` start their own D-Bus session with
-//! `dbus-run-session`, and a throwaway `gnome-keyring-daemon` or
-//! `dbus-test-tool`; they never touch the person's own keyring. Run them
-//! with `cargo test -p isocast-platform-credentials --test keyring --
-//! --include-ignored`.
+//! The Linux secret store. Each case reruns this binary as a child with its
+//! own `HOME`, `XDG_CONFIG_HOME` and session bus; `child_entry` does the work.
+//! The `#[ignore]` cases start a private bus with a throwaway keyring: run
+//! them with `cargo test -p isocast-platform-credentials --test keyring -- --include-ignored`.
 #![cfg(target_os = "linux")]
 
 use std::os::unix::fs::PermissionsExt;
